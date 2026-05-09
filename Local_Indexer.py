@@ -231,17 +231,36 @@ class LocalIndexer:
         root: os.PathLike | str,
         output_path: os.PathLike | str = "embeddings.pkl",
         log_every: int = 200,
+        incremental: bool = False,
     ) -> dict:
         root = Path(root).expanduser().resolve()
         output_path = Path(output_path).expanduser().resolve()
         if not root.is_dir():
             raise NotADirectoryError(root)
 
+        # 增量模式：載入既有 embeddings，建立已索引路徑集合
+        existing_paths: set = set()
+        existing_data: Optional[dict] = None
+        if incremental and output_path.exists():
+            LOGGER.info("Incremental mode: loading existing %s ...", output_path)
+            with open(output_path, "rb") as f:
+                existing_data = pickle.load(f)
+            existing_paths = set(existing_data["paths"])
+            LOGGER.info("Found %d existing embeddings", len(existing_paths))
+
         LOGGER.info("Scanning %s ...", root)
-        paths = list(iter_images(root))
-        total = len(paths)
+        all_paths = list(iter_images(root))
+        total = len(all_paths)
         LOGGER.info("Found %d candidate images", total)
-        if total == 0:
+
+        # 增量模式：只處理新圖片
+        if incremental and existing_paths:
+            new_paths = [p for p in all_paths if str(p) not in existing_paths]
+            LOGGER.info("New images to index: %d (skipping %d existing)", len(new_paths), len(existing_paths))
+        else:
+            new_paths = all_paths
+
+        if not new_paths and not existing_paths:
             empty = {
                 "paths": [],
                 "vectors": np.zeros((0, self.embedding_dim), dtype=np.float32),
@@ -254,7 +273,11 @@ class LocalIndexer:
                 pickle.dump(empty, f, protocol=pickle.HIGHEST_PROTOCOL)
             return empty
 
-        dataset = _ImageDataset(paths, self.preprocess)
+        if not new_paths:
+            LOGGER.info("No new images to index — keeping existing embeddings")
+            return existing_data
+
+        dataset = _ImageDataset(new_paths, self.preprocess)
         # MPS 不支援 pin_memory；CUDA 才開
         pin = self.device.type == "cuda"
         loader = DataLoader(
@@ -279,32 +302,44 @@ class LocalIndexer:
                 continue
             feats = self._encode_batch(tensor)
             for i, v, e in zip(idxs, feats, exifs):
-                out_paths.append(str(paths[i]))
+                out_paths.append(str(new_paths[i]))
                 out_vecs.append(v)
                 out_exifs.append(e)
             processed += len(idxs)
             if processed // log_every != (processed - len(idxs)) // log_every:
-                LOGGER.info("Encoded %d / %d", processed, total)
+                LOGGER.info("Encoded %d / %d", processed, len(new_paths))
 
-        skipped = total - processed
+        skipped = len(new_paths) - processed
         LOGGER.info("Done. encoded=%d skipped=%d", processed, skipped)
 
-        vectors = (
+        new_vectors = (
             np.stack(out_vecs, axis=0).astype(np.float32)
             if out_vecs
             else np.zeros((0, self.embedding_dim), dtype=np.float32)
         )
+
+        # 增量模式：合併既有 + 新增
+        if incremental and existing_data:
+            merged_paths = existing_data["paths"] + out_paths
+            merged_vectors = np.concatenate([existing_data["vectors"], new_vectors], axis=0)
+            merged_exifs = existing_data["exif"] + out_exifs
+            LOGGER.info("Merged: %d existing + %d new = %d total", len(existing_data["paths"]), len(out_paths), len(merged_paths))
+        else:
+            merged_paths = out_paths
+            merged_vectors = new_vectors
+            merged_exifs = out_exifs
+
         result = {
-            "paths": out_paths,
-            "vectors": vectors,
-            "exif": out_exifs,
+            "paths": merged_paths,
+            "vectors": merged_vectors,
+            "exif": merged_exifs,
             "model": f"{self.model_name}/{self.pretrained}",
             "dim": self.embedding_dim,
         }
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "wb") as f:
             pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
-        LOGGER.info("Saved %d embeddings → %s", len(out_paths), output_path)
+        LOGGER.info("Saved %d embeddings → %s", len(merged_paths), output_path)
         return result
 
 
@@ -326,6 +361,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", default=None, choices=["mps", "cuda", "cpu"])
+    parser.add_argument("--incremental", action="store_true", help="增量索引：跳過已存在的圖片，合併既有 embeddings")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
 
@@ -337,7 +373,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         num_workers=args.num_workers,
         device=args.device,
     )
-    indexer.index_directory(args.root, args.output)
+    indexer.index_directory(args.root, args.output, incremental=args.incremental)
     return 0
 
 

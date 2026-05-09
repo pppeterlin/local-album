@@ -249,6 +249,7 @@ class XiaomiLabeler:
         self,
         samples_json: os.PathLike | str,
         output_path: os.PathLike | str = "labels.json",
+        incremental: bool = False,
     ) -> Dict:
         data = json.loads(Path(samples_json).read_text(encoding="utf-8"))
         paths: List[str] = (
@@ -257,21 +258,70 @@ class XiaomiLabeler:
         )
         if not paths:
             LOGGER.warning("No paths in samples; nothing to label.")
-        results = self.label_many(paths)
-        succeeded = sum(1 for r in results if "error" not in r)
+
+        # 增量模式：載入既有 labels，跳過已標注的圖片
+        existing_results: List[Dict] = []
+        labeled_paths: set = set()
+        if incremental:
+            out = Path(output_path)
+            if out.exists():
+                existing = json.loads(out.read_text(encoding="utf-8"))
+                existing_results = existing.get("results", [])
+                labeled_paths = {r["path"] for r in existing_results if "error" not in r}
+                LOGGER.info("Incremental: found %d existing labels, %d succeeded", len(existing_results), len(labeled_paths))
+
+        # 篩選出需要標注的新圖片
+        new_paths = [p for p in paths if p not in labeled_paths]
+        if incremental and labeled_paths:
+            LOGGER.info("New images to label: %d (skipping %d existing)", len(new_paths), len(labeled_paths))
+
+        if not new_paths:
+            LOGGER.info("No new images to label — keeping existing labels")
+            return {
+                "model": self.client.model,
+                "count": len(existing_results),
+                "succeeded": sum(1 for r in existing_results if "error" not in r),
+                "failed": sum(1 for r in existing_results if "error" in r),
+                "results": existing_results,
+            }
+
+        # 逐張標注，每張存檔
+        new_results: List[Dict] = []
+        for i, p in enumerate(new_paths, 1):
+            LOGGER.info("[%d/%d] labeling %s", i, len(new_paths), p)
+            result = self.label_image(p)
+            new_results.append(result)
+
+            # 合併現有 + 新增，每張存檔
+            all_results = existing_results + new_results
+            succeeded = sum(1 for r in all_results if "error" not in r)
+            payload = {
+                "model": self.client.model,
+                "count": len(all_results),
+                "succeeded": succeeded,
+                "failed": len(all_results) - succeeded,
+                "results": all_results,
+            }
+            out = Path(output_path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+
+            status = "ok" if "error" not in result else "fail"
+            LOGGER.info("[%d/%d] %s → saved (%s)", i, len(new_paths), Path(p).name, status)
+
+        # 最終統計
+        all_results = existing_results + new_results
+        succeeded = sum(1 for r in all_results if "error" not in r)
         payload = {
             "model": self.client.model,
-            "count": len(results),
+            "count": len(all_results),
             "succeeded": succeeded,
-            "failed": len(results) - succeeded,
-            "results": results,
+            "failed": len(all_results) - succeeded,
+            "results": all_results,
         }
-        out = Path(output_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
         LOGGER.info(
-            "Wrote %d labels (%d ok, %d fail) → %s",
-            payload["count"], payload["succeeded"], payload["failed"], out,
+            "Done: %d total labels (%d ok, %d fail) → %s",
+            payload["count"], payload["succeeded"], payload["failed"], output_path,
         )
         return payload
 
@@ -299,6 +349,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.add_argument("--max-retries", type=int, default=3)
     p.add_argument("--no-reasoning", action="store_true", help="關閉 reasoning/thinking tokens，節省 token 用量")
+    p.add_argument("--incremental", action="store_true", help="增量標注：跳過已標注圖片，每張存檔")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
     _setup_logging(args.log_level)
@@ -322,7 +373,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         prompt=args.prompt,
         max_completion_tokens=args.max_tokens,
     )
-    labeler.label_from_samples(args.samples, args.output)
+    labeler.label_from_samples(args.samples, args.output, incremental=args.incremental)
     return 0
 
 
