@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import pickle
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -56,6 +57,29 @@ class PhotoSearcher:
         LOGGER.info("Model ready")
 
     @staticmethod
+    def _has_cjk(text: str) -> bool:
+        """檢查文字是否包含中日韓字元。"""
+        return bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf]', text))
+
+    @staticmethod
+    def _translate_to_english(text: str, api_key: str, base_url: str) -> str:
+        """用 MiMo API 將中文翻譯成英文（供 CLIP text encoder 使用）。"""
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        resp = client.chat.completions.create(
+            model="mimo-v2.5",
+            messages=[
+                {"role": "system", "content": "You are a translator. Translate the user's text to English. Output ONLY the translation, nothing else."},
+                {"role": "user", "content": text},
+            ],
+            max_tokens=100,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        )
+        translated = resp.choices[0].message.content.strip()
+        LOGGER.info("Translated: \"%s\" → \"%s\"", text, translated)
+        return translated
+
+    @staticmethod
     def _select_device(device: Optional[str]) -> torch.device:
         if device:
             return torch.device(device)
@@ -81,17 +105,23 @@ class PhotoSearcher:
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
         camera: Optional[str] = None,
+        translate: bool = False,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
     ) -> List[Dict]:
         """
         語義搜尋照片。
 
         Args:
-            query: 查詢文字（支援中英文）
+            query: 查詢文字（支援中英文，中文會自動翻譯）
             embeddings_path: embeddings.pkl 路徑
             top_k: 回傳前 k 個結果
             date_from: 篩選起始日期 (YYYY-MM-DD)
             date_to: 篩選結束日期 (YYYY-MM-DD)
             camera: 篩選相機型號（模糊匹配）
+            translate: 強制翻譯（預設自動偵測中文）
+            api_key: MiMo API key（翻譯用）
+            base_url: MiMo API base URL（翻譯用）
 
         Returns:
             [{"path": str, "score": float, "exif": dict}, ...]
@@ -127,9 +157,19 @@ class PhotoSearcher:
         if filter_desc:
             LOGGER.info("Filters: %s → %d images", ", ".join(filter_desc), filtered_count)
 
-        # 編碼查詢文字
-        LOGGER.info("Encoding query: \"%s\"", query)
-        text_vec = self.encode_text(query)  # (1, dim)
+        # 編碼查詢文字（中文自動翻譯成英文）
+        search_query = query
+        if translate or (self._has_cjk(query) and api_key):
+            if not api_key:
+                LOGGER.warning("Query contains CJK but no API key provided — skipping translation")
+            else:
+                try:
+                    search_query = self._translate_to_english(query, api_key, base_url or "https://token-plan-cn.xiaomimimo.com/v1")
+                except Exception as e:
+                    LOGGER.warning("Translation failed: %s — using original query", e)
+
+        LOGGER.info("Encoding query: \"%s\"", search_query)
+        text_vec = self.encode_text(search_query)  # (1, dim)
 
         # 計算 cosine similarity（向量已 L2-normalized，dot product = cosine）
         # 只計算符合篩選條件的向量
@@ -228,6 +268,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--date-from", default=None, help="篩選起始日期 (YYYY-MM-DD)")
     p.add_argument("--date-to", default=None, help="篩選結束日期 (YYYY-MM-DD)")
     p.add_argument("--camera", default=None, help="篩選相機型號（模糊匹配）")
+    p.add_argument("--translate", action="store_true", help="強制翻譯查詢為英文（預設自動偵測中文）")
+    p.add_argument("--api-key", default=None, help="MiMo API key（翻譯用，預設讀 MIMO_API_KEY 環境變數）")
+    p.add_argument("--base-url", default=None, help="MiMo API base URL（翻譯用）")
     p.add_argument("--json", action="store_true", help="以 JSON 格式輸出")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
@@ -239,6 +282,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         device=args.device,
     )
 
+    # API key for translation (CLI > env)
+    api_key = args.api_key or os.environ.get("MIMO_API_KEY")
+    base_url = args.base_url or os.environ.get("MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1")
+
     results = searcher.search(
         query=args.query,
         embeddings_path=args.embeddings,
@@ -246,6 +293,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         date_from=args.date_from,
         date_to=args.date_to,
         camera=args.camera,
+        translate=args.translate,
+        api_key=api_key,
+        base_url=base_url,
     )
 
     if not results:
