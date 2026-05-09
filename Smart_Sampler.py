@@ -31,7 +31,7 @@ class SmartSampler:
         keep_noise: bool = True,
     ):
         method = method.lower()
-        if method not in {"dbscan", "kmeans"}:
+        if method not in {"dbscan", "kmeans", "random"}:
             raise ValueError(f"Unknown method: {method}")
         self.method = method
         self.samples_per_cluster = max(1, int(samples_per_cluster))
@@ -69,7 +69,19 @@ class SmartSampler:
         eps: float = 0.25,
         min_samples: int = 3,
         k: Optional[int] = None,
+        sample_ratio: float = 0.3,
     ) -> np.ndarray:
+        if self.method == "random":
+            # 隨機抽樣：返回 0/1 labels，1 表示被選中
+            n = len(X)
+            n_sample = max(1, int(n * sample_ratio))
+            labels = np.full(n, -1, dtype=int)
+            rng = np.random.RandomState(42)
+            selected = rng.choice(n, size=n_sample, replace=False)
+            labels[selected] = 0  # 所有選中的歸為同一類
+            LOGGER.info("Random sampling: %d / %d (%.0f%%)", n_sample, n, sample_ratio * 100)
+            return labels
+
         if self.method == "dbscan":
             LOGGER.info(
                 "DBSCAN(eps=%.3f, min_samples=%d, metric=cosine) on %d vectors",
@@ -98,7 +110,8 @@ class SmartSampler:
         for lab in unique_labels:
             idx = np.where(labels == lab)[0]
             if lab == -1:
-                if self.keep_noise:
+                # 隨機抽樣模式：noise 是未被選中的，不保留
+                if self.keep_noise and self.method != "random":
                     # 雜訊點各自視為獨特樣本，全數保留
                     for i in idx:
                         results.append({"cluster": -1, "path": paths[int(i)], "score": 1.0})
@@ -108,7 +121,12 @@ class SmartSampler:
             centroid = cluster_X.mean(axis=0)
             centroid = centroid / (np.linalg.norm(centroid) + 1e-12)
             sims = cluster_X @ centroid  # 已 L2-normalized → cosine 相似度
-            order = np.argsort(-sims)[: self.samples_per_cluster]
+            # 隨機抽樣模式：取全部選中的圖片
+            if self.method == "random":
+                n_select = len(idx)
+            else:
+                n_select = self.samples_per_cluster
+            order = np.argsort(-sims)[:n_select]
             for o in order:
                 results.append(
                     {
@@ -129,6 +147,7 @@ class SmartSampler:
         eps: float = 0.25,
         min_samples: int = 3,
         k: Optional[int] = None,
+        sample_ratio: float = 0.3,
     ) -> Dict:
         embeddings_path = Path(embeddings_path)
         output_path = Path(output_path)
@@ -141,7 +160,7 @@ class SmartSampler:
             return payload
 
         X = self._normalize(vectors)
-        labels = self.cluster(X, eps=eps, min_samples=min_samples, k=k)
+        labels = self.cluster(X, eps=eps, min_samples=min_samples, k=k, sample_ratio=sample_ratio)
 
         n_clusters = len({int(l) for l in labels.tolist()} - {-1})
         n_noise = int((labels == -1).sum())
@@ -176,11 +195,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(description="對 CLIP 向量做聚類與代表採樣")
     p.add_argument("embeddings", help="Local_Indexer 產出的 embeddings.pkl")
     p.add_argument("-o", "--output", default="samples.json")
-    p.add_argument("--method", default="dbscan", choices=["dbscan", "kmeans"])
+    p.add_argument("--method", default="dbscan", choices=["dbscan", "kmeans", "random"])
     p.add_argument("--n", type=int, default=1, help="每群採樣張數")
     p.add_argument("--eps", type=float, default=0.25, help="DBSCAN cosine 距離門檻")
     p.add_argument("--min-samples", type=int, default=3, help="DBSCAN min_samples")
     p.add_argument("--k", type=int, default=None, help="KMeans k；省略則 sqrt(n/2)")
+    p.add_argument("--sample-ratio", type=float, default=0.3, help="隨機抽樣比例（random 模式用，預設 0.3）")
     p.add_argument("--drop-noise", action="store_true", help="DBSCAN 雜訊點不保留")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
@@ -197,6 +217,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         eps=args.eps,
         min_samples=args.min_samples,
         k=args.k,
+        sample_ratio=args.sample_ratio,
     )
     return 0
 
