@@ -13,6 +13,9 @@ build/
 venv/
 env/
 
+# uv
+.python-version
+
 # IDE
 .claude/
 .vscode/

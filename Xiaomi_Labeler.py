@@ -36,10 +36,10 @@ LOGGER = logging.getLogger("XiaomiLabeler")
 DEFAULT_MAX_LONG_EDGE = 1024
 DEFAULT_TIMEOUT = 60
 DEFAULT_JPEG_QUALITY = 90
-DEFAULT_BASE_URL = "https://api.xiaomimimo.com/v1"
+DEFAULT_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1"
 DEFAULT_MODEL = "mimo-v2.5"
-DEFAULT_PROMPT = "please describe the content of the image"
-DEFAULT_MAX_TOKENS = 1024
+DEFAULT_PROMPT = "请用中文描述这张图片的内容"
+DEFAULT_MAX_TOKENS = 500
 JPEG_MIME = "image/jpeg"
 
 
@@ -112,6 +112,7 @@ class XiaomiVisionClient:
         timeout: int = DEFAULT_TIMEOUT,
         max_retries: int = 3,
         system_prompt: Optional[str] = None,
+        extra_body: Optional[Dict] = None,
     ):
         try:
             from openai import OpenAI  # 延遲匯入，避免無 openai 環境時 import 即失敗
@@ -130,6 +131,7 @@ class XiaomiVisionClient:
         self.timeout = int(timeout)
         self.max_retries = max(1, int(max_retries))
         self.system_prompt = system_prompt or self._default_system_prompt()
+        self.extra_body = extra_body
 
         self._client = OpenAI(
             api_key=self.api_key,
@@ -169,6 +171,7 @@ class XiaomiVisionClient:
                 {"role": "user", "content": user_content},
             ],
             max_completion_tokens=max_completion_tokens,
+            extra_body=self.extra_body,
         )
         # OpenAI SDK 物件 → dict
         return json.loads(completion.model_dump_json())
@@ -295,16 +298,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY)
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.add_argument("--max-retries", type=int, default=3)
+    p.add_argument("--no-reasoning", action="store_true", help="關閉 reasoning/thinking tokens，節省 token 用量")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
     _setup_logging(args.log_level)
 
+    extra_body = {"chat_template_kwargs": {"enable_thinking": False}} if args.no_reasoning else None
     client = XiaomiVisionClient(
         api_key=args.api_key,
         base_url=args.base_url,
         model=args.model,
         timeout=args.timeout,
         max_retries=args.max_retries,
+        extra_body=extra_body,
     )
     privacy = PrivacyProcessor(
         max_long_edge=args.max_long_edge,
