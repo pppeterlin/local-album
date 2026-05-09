@@ -101,6 +101,7 @@ class PhotoSearcher:
         self,
         query: str,
         embeddings_path: str,
+        labels_path: Optional[str] = None,
         top_k: int = 10,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
@@ -108,13 +109,15 @@ class PhotoSearcher:
         translate: bool = False,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
+        clip_weight: float = 0.6,
     ) -> List[Dict]:
         """
-        語義搜尋照片。
+        混合語義搜尋：CLIP 向量相似度 + 標注關鍵字匹配。
 
         Args:
-            query: 查詢文字（支援中英文，中文會自動翻譯）
+            query: 查詢文字（支援中英文，中文會自動翻譯給 CLIP）
             embeddings_path: embeddings.pkl 路徑
+            labels_path: labels.json 路徑（可選，啟用關鍵字搜尋）
             top_k: 回傳前 k 個結果
             date_from: 篩選起始日期 (YYYY-MM-DD)
             date_to: 篩選結束日期 (YYYY-MM-DD)
@@ -122,9 +125,10 @@ class PhotoSearcher:
             translate: 強制翻譯（預設自動偵測中文）
             api_key: MiMo API key（翻譯用）
             base_url: MiMo API base URL（翻譯用）
+            clip_weight: CLIP 相似度權重（0~1，剩餘為關鍵字權重）
 
         Returns:
-            [{"path": str, "score": float, "exif": dict}, ...]
+            [{"path": str, "score": float, "clip_score": float, "keyword_score": float, "label": str, "exif": dict}, ...]
         """
         # 載入 embeddings
         LOGGER.info("Loading embeddings from %s", embeddings_path)
@@ -136,6 +140,17 @@ class PhotoSearcher:
         exif_list = data.get("exif", [{}] * len(paths))
 
         LOGGER.info("Index: %d images, dim=%d", len(paths), vectors.shape[1])
+
+        # 載入 labels（關鍵字搜尋用）
+        path_to_label: Dict[str, str] = {}
+        if labels_path and Path(labels_path).exists():
+            LOGGER.info("Loading labels from %s", labels_path)
+            with open(labels_path, "r", encoding="utf-8") as f:
+                labels_data = json.load(f)
+            for r in labels_data.get("results", []):
+                if "error" not in r and r.get("text"):
+                    path_to_label[r["path"]] = r["text"]
+            LOGGER.info("Labels loaded: %d", len(path_to_label))
 
         # 建立篩選 mask
         mask = np.ones(len(paths), dtype=bool)
@@ -174,12 +189,35 @@ class PhotoSearcher:
         # 計算 cosine similarity（向量已 L2-normalized，dot product = cosine）
         # 只計算符合篩選條件的向量
         filtered_vectors = vectors[mask]  # (M, dim)
-        similarities = (filtered_vectors @ text_vec.T).squeeze(-1)  # (M,)
+        clip_similarities = (filtered_vectors @ text_vec.T).squeeze(-1)  # (M,)
+
+        # 計算關鍵字匹配分數（如果有 labels）
+        keyword_similarities = np.zeros(len(clip_similarities), dtype=np.float32)
+        if path_to_label:
+            query_lower = query.lower()
+            filtered_paths = [paths[i] for i in np.where(mask)[0]]
+            for i, p in enumerate(filtered_paths):
+                label = path_to_label.get(p, "").lower()
+                if query_lower in label:
+                    # 完全匹配給 1.0，部分匹配按比例
+                    keyword_similarities[i] = 1.0
+
+        # 混合分數
+        if path_to_label:
+            # 有 labels：加權組合
+            clip_w = clip_weight
+            keyword_w = 1.0 - clip_weight
+            combined_scores = clip_w * clip_similarities + keyword_w * keyword_similarities
+            LOGGER.info("Hybrid search: CLIP weight=%.1f, keyword weight=%.1f", clip_w, keyword_w)
+        else:
+            # 無 labels：純 CLIP
+            combined_scores = clip_similarities
+            LOGGER.info("CLIP-only search (no labels provided)")
 
         # 取 top-k
-        k = min(top_k, len(similarities))
-        top_indices = np.argpartition(similarities, -k)[-k:]
-        top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
+        k = min(top_k, len(combined_scores))
+        top_indices = np.argpartition(combined_scores, -k)[-k:]
+        top_indices = top_indices[np.argsort(combined_scores[top_indices])[::-1]]
 
         # 映射回原始 index
         original_indices = np.where(mask)[0]
@@ -187,9 +225,13 @@ class PhotoSearcher:
         results = []
         for idx in top_indices:
             orig_idx = original_indices[idx]
+            path = paths[orig_idx]
             results.append({
-                "path": paths[orig_idx],
-                "score": float(similarities[idx]),
+                "path": path,
+                "score": float(combined_scores[idx]),
+                "clip_score": float(clip_similarities[idx]),
+                "keyword_score": float(keyword_similarities[idx]),
+                "label": path_to_label.get(path, ""),
                 "exif": exif_list[orig_idx],
             })
 
@@ -268,6 +310,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--date-from", default=None, help="篩選起始日期 (YYYY-MM-DD)")
     p.add_argument("--date-to", default=None, help="篩選結束日期 (YYYY-MM-DD)")
     p.add_argument("--camera", default=None, help="篩選相機型號（模糊匹配）")
+    p.add_argument("--labels", default=None, help="labels.json 路徑（啟用混合搜尋：CLIP + 關鍵字）")
+    p.add_argument("--clip-weight", type=float, default=0.6, help="CLIP 權重（0~1，預設 0.6，剩餘為關鍵字權重）")
     p.add_argument("--translate", action="store_true", help="強制翻譯查詢為英文（預設自動偵測中文）")
     p.add_argument("--api-key", default=None, help="MiMo API key（翻譯用，預設讀 MIMO_API_KEY 環境變數）")
     p.add_argument("--base-url", default=None, help="MiMo API base URL（翻譯用）")
@@ -289,6 +333,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     results = searcher.search(
         query=args.query,
         embeddings_path=args.embeddings,
+        labels_path=args.labels,
         top_k=args.top,
         date_from=args.date_from,
         date_to=args.date_to,
@@ -296,6 +341,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         translate=args.translate,
         api_key=api_key,
         base_url=base_url,
+        clip_weight=args.clip_weight,
     )
 
     if not results:
@@ -308,8 +354,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"\n🔍 \"{args.query}\" — Top {len(results)} results:\n")
         for i, r in enumerate(results, 1):
             score_pct = r["score"] * 100
+            clip_pct = r.get("clip_score", 0) * 100
+            keyword_pct = r.get("keyword_score", 0) * 100
             path = r["path"]
             filename = Path(path).name
+            label = r.get("label", "")
             exif = r["exif"]
 
             # 格式化 EXIF 資訊
@@ -321,8 +370,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                 exif_parts.append(cam)
             exif_str = " │ ".join(exif_parts) if exif_parts else ""
 
-            print(f"  {i}. [{score_pct:5.1f}%] {filename}")
+            # 分數顯示
+            if keyword_pct > 0:
+                score_display = f"[{score_pct:5.1f}% = CLIP {clip_pct:.1f}% + KW {keyword_pct:.1f}%]"
+            else:
+                score_display = f"[{score_pct:5.1f}%]"
+
+            print(f"  {i}. {score_display} {filename}")
             print(f"     {path}")
+            if label:
+                # 截斷長標注
+                label_preview = label[:80] + "..." if len(label) > 80 else label
+                print(f"     🏷️  {label_preview}")
             if exif_str:
                 print(f"     📷 {exif_str}")
             print()
