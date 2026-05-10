@@ -56,6 +56,74 @@ class PhotoSearcher:
         self.tokenizer = open_clip.get_tokenizer(model_name)
         LOGGER.info("Model ready")
 
+    def create_label_embeddings(
+        self,
+        labels_path: str,
+        output_path: str,
+        api_key: str,
+        base_url: str,
+    ) -> Dict:
+        """
+        為所有標注建立 CLIP 向量（翻譯成英文後編碼）。
+
+        Args:
+            labels_path: labels.json 路徑
+            output_path: label_embeddings.pkl 輸出路徑
+            api_key: MiMo API key（翻譯用）
+            base_url: MiMo API base URL
+
+        Returns:
+            {"paths": [...], "vectors": np.ndarray, "labels": [...]}
+        """
+        LOGGER.info("Loading labels from %s", labels_path)
+        with open(labels_path, "r", encoding="utf-8") as f:
+            labels_data = json.load(f)
+
+        paths = []
+        labels = []
+        for r in labels_data.get("results", []):
+            if "error" not in r and r.get("text"):
+                paths.append(r["path"])
+                labels.append(r["text"])
+
+        LOGGER.info("Translating %d labels to English...", len(labels))
+        translated = []
+        for i, label in enumerate(labels):
+            if (i + 1) % 50 == 0:
+                LOGGER.info("Translating %d / %d", i + 1, len(labels))
+            try:
+                en = self._translate_to_english(label, api_key, base_url)
+                translated.append(en)
+            except Exception as e:
+                LOGGER.warning("Translation failed for %s: %s", paths[i], e)
+                translated.append("")
+
+        LOGGER.info("Encoding %d labels with CLIP...", len(translated))
+        vectors = []
+        for i in range(0, len(translated), 32):
+            batch = translated[i:i+32]
+            tokens = self.tokenizer(batch).to(self.device)
+            with torch.no_grad():
+                feats = self.model.encode_text(tokens)
+                feats = feats / feats.norm(dim=-1, keepdim=True)
+            vectors.append(feats.cpu().numpy().astype(np.float32))
+
+        vectors = np.concatenate(vectors, axis=0)
+
+        result = {
+            "paths": paths,
+            "vectors": vectors,
+            "labels": labels,
+            "translations": translated,
+        }
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "wb") as f:
+            pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
+        LOGGER.info("Saved %d label embeddings → %s", len(paths), output_path)
+        return result
+
     @staticmethod
     def _has_cjk(text: str) -> bool:
         """檢查文字是否包含中日韓字元。"""
@@ -143,16 +211,35 @@ class PhotoSearcher:
 
         LOGGER.info("Index: %d images, dim=%d", len(paths), vectors.shape[1])
 
-        # 載入 labels（關鍵字搜尋用）
-        path_to_label: Dict[str, str] = {}
+        # 載入 labels.json 建立 path→label 對照表（關鍵字搜尋用）
+        path_to_label = {}
         if labels_path and Path(labels_path).exists():
             LOGGER.info("Loading labels from %s", labels_path)
             with open(labels_path, "r", encoding="utf-8") as f:
                 labels_data = json.load(f)
             for r in labels_data.get("results", []):
-                if "error" not in r and r.get("text"):
-                    path_to_label[r["path"]] = r["text"]
-            LOGGER.info("Labels loaded: %d", len(path_to_label))
+                p = r.get("path", "")
+                t = r.get("text", "")
+                if p and t:
+                    path_to_label[p] = t
+            LOGGER.info("Loaded %d labels for keyword matching", len(path_to_label))
+
+        # 載入 label embeddings（語義搜尋用）
+        label_emb_path = Path(embeddings_path).parent / "label_embeddings.pkl"
+        label_paths = []
+        label_vectors = None
+        label_texts = {}
+        if label_emb_path.exists():
+            LOGGER.info("Loading label embeddings from %s", label_emb_path)
+            with open(label_emb_path, "rb") as f:
+                lemb = pickle.load(f)
+            label_paths = lemb["paths"]
+            label_vectors = lemb["vectors"]
+            for p, t in zip(lemb["paths"], lemb.get("labels", [])):
+                label_texts[p] = t
+            LOGGER.info("Label embeddings: %d", len(label_paths))
+        else:
+            LOGGER.info("No label_embeddings.pkl found — using CLIP-only search")
 
         # 建立篩選 mask
         mask = np.ones(len(paths), dtype=bool)

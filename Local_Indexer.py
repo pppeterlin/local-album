@@ -309,6 +309,23 @@ class LocalIndexer:
             if processed // log_every != (processed - len(idxs)) // log_every:
                 LOGGER.info("Encoded %d / %d", processed, len(new_paths))
 
+            # 每 2000 張存一次 checkpoint（避免 timeout 遺失）
+            if processed % 2000 < self.batch_size and processed > 0:
+                ckpt_vecs = np.stack(out_vecs, axis=0).astype(np.float32)
+                if incremental and existing_data:
+                    ckpt_paths = existing_data["paths"] + out_paths
+                    ckpt_vectors = np.concatenate([existing_data["vectors"], ckpt_vecs], axis=0)
+                    ckpt_exifs = existing_data["exif"] + out_exifs
+                else:
+                    ckpt_paths = out_paths
+                    ckpt_vectors = ckpt_vecs
+                    ckpt_exifs = out_exifs
+                ckpt = {"paths": ckpt_paths, "vectors": ckpt_vectors, "exif": ckpt_exifs,
+                        "model": f"{self.model_name}/{self.pretrained}", "dim": self.embedding_dim}
+                with open(output_path, "wb") as f:
+                    pickle.dump(ckpt, f, protocol=pickle.HIGHEST_PROTOCOL)
+                LOGGER.info("Checkpoint saved: %d images → %s", len(ckpt_paths), output_path)
+
         skipped = len(new_paths) - processed
         LOGGER.info("Done. encoded=%d skipped=%d", processed, skipped)
 
