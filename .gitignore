@@ -29,9 +29,12 @@ env/
 Thumbs.db
 
 # Project outputs (large files, don't track)
-embeddings.pkl
-samples.json
-labels.json
+embeddings*.pkl
+samples*.json
+labels*.json
+*.pkl
+*.json
+!.gitignore
 
 # Model weights
 *.pt
