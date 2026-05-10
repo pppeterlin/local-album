@@ -208,11 +208,13 @@ class XiaomiLabeler:
         privacy: Optional[PrivacyProcessor] = None,
         prompt: str = DEFAULT_PROMPT,
         max_completion_tokens: int = DEFAULT_MAX_TOKENS,
+        concurrency: int = 1,
     ):
         self.client = client or XiaomiVisionClient()
         self.privacy = privacy or PrivacyProcessor()
         self.prompt = prompt
         self.max_completion_tokens = int(max_completion_tokens)
+        self.concurrency = max(1, int(concurrency))
 
     def label_image(self, path: os.PathLike | str) -> Dict:
         path = Path(path)
@@ -285,29 +287,59 @@ class XiaomiLabeler:
                 "results": existing_results,
             }
 
-        # 逐張標注，每張存檔
+        # 並行標注
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         new_results: List[Dict] = []
-        for i, p in enumerate(new_paths, 1):
-            LOGGER.info("[%d/%d] labeling %s", i, len(new_paths), p)
-            result = self.label_image(p)
-            new_results.append(result)
+        batch_size = self.concurrency * 5  # 每批存檔一次
 
-            # 合併現有 + 新增，每張存檔
-            all_results = existing_results + new_results
-            succeeded = sum(1 for r in all_results if "error" not in r)
-            payload = {
-                "model": self.client.model,
-                "count": len(all_results),
-                "succeeded": succeeded,
-                "failed": len(all_results) - succeeded,
-                "results": all_results,
-            }
-            out = Path(output_path)
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+        LOGGER.info("Starting labeling: %d images, concurrency=%d, batch_size=%d",
+                     len(new_paths), self.concurrency, batch_size)
 
-            status = "ok" if "error" not in result else "fail"
-            LOGGER.info("[%d/%d] %s → saved (%s)", i, len(new_paths), Path(p).name, status)
+        with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
+            # 分批處理
+            for batch_start in range(0, len(new_paths), batch_size):
+                batch_end = min(batch_start + batch_size, len(new_paths))
+                batch_paths = new_paths[batch_start:batch_end]
+
+                # 提交整批任務
+                future_to_path = {
+                    executor.submit(self.label_image, p): (batch_start + i, p)
+                    for i, p in enumerate(batch_paths)
+                }
+
+                # 收集結果（保持順序）
+                batch_results: Dict[int, Dict] = {}
+                for future in as_completed(future_to_path):
+                    idx, path = future_to_path[future]
+                    try:
+                        result = future.result()
+                    except Exception as e:
+                        LOGGER.error("Label failed for %s: %s", path, e)
+                        result = {"path": path, "error": str(e)}
+                    batch_results[idx] = result
+                    status = "ok" if "error" not in result else "fail"
+                    LOGGER.info("[%d/%d] %s → %s", idx + 1, len(new_paths), Path(path).name, status)
+
+                # 按順序加入結果
+                for idx in sorted(batch_results.keys()):
+                    new_results.append(batch_results[idx])
+
+                # 每批存檔
+                all_results = existing_results + new_results
+                succeeded = sum(1 for r in all_results if "error" not in r)
+                payload = {
+                    "model": self.client.model,
+                    "count": len(all_results),
+                    "succeeded": succeeded,
+                    "failed": len(all_results) - succeeded,
+                    "results": all_results,
+                }
+                out = Path(output_path)
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+                LOGGER.info("Batch saved: %d/%d done (%d ok, %d fail)",
+                           len(new_results), len(new_paths), succeeded, len(all_results) - succeeded)
 
         # 最終統計
         all_results = existing_results + new_results
@@ -349,7 +381,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.add_argument("--max-retries", type=int, default=3)
     p.add_argument("--no-reasoning", action="store_true", help="關閉 reasoning/thinking tokens，節省 token 用量")
-    p.add_argument("--incremental", action="store_true", help="增量標注：跳過已標注圖片，每張存檔")
+    p.add_argument("--incremental", action="store_true", help="增量標注：跳過已標注圖片，每批存檔")
+    p.add_argument("--concurrency", type=int, default=5, help="並行標注數（預設 5，100 RPM 下建議 5-10）")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
     _setup_logging(args.log_level)
@@ -372,6 +405,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         privacy=privacy,
         prompt=args.prompt,
         max_completion_tokens=args.max_tokens,
+        concurrency=args.concurrency,
     )
     labeler.label_from_samples(args.samples, args.output, incremental=args.incremental)
     return 0
