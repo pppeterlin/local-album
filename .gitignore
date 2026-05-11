@@ -41,3 +41,4 @@ labels*.json
 *.pth
 *.onnx
 *.bin
+.env
