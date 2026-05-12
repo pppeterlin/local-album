@@ -66,17 +66,24 @@ def search_photos(
     year: int | None = None,
     month: int | None = None,
     location: str | None = None,
+    path_contains: str | None = None,
     top_k: int = 20,
 ) -> list[dict[str, Any]]:
     """Search the photo index by any combination of filters.
 
+    Filters are combined with AND — each one narrows the result set.
+    Use this to compose queries like "childhood photos with grandpa" in
+    a single call (e.g. face='阿公', path_contains='小時候').
+
     Args:
-        query:    Substring to match against image labels (case-insensitive).
-        face:     Face cluster ID (e.g. "face_0") OR display name (e.g. "Mom").
-        year:     Filter by EXIF year (e.g. 2023).
-        month:    Filter by EXIF month (1-12).
-        location: Substring match against location field (lat,lng or place name).
-        top_k:    Max results (default 20). Use a small number for previews.
+        query:         Substring to match against image labels (case-insensitive).
+        face:          Face cluster ID (e.g. "face_0") OR display name (e.g. "Mom").
+        year:          Filter by EXIF year (e.g. 2023).
+        month:         Filter by EXIF month (1-12).
+        location:      Substring match against location field.
+        path_contains: Substring match against the file path (folder name,
+                       subdir, filename — useful for scoping to an album).
+        top_k:         Max results (default 20).
 
     Returns:
         List of matches sorted by relevance, each with:
@@ -89,6 +96,7 @@ def search_photos(
         year=year,
         month=month,
         location=location,
+        path_contains=path_contains,
         top_k=top_k,
     )
 

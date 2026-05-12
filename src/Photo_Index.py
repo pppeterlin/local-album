@@ -177,6 +177,7 @@ class PhotoIndex:
         year: Optional[int] = None,
         month: Optional[int] = None,
         location: Optional[str] = None,
+        path_contains: Optional[str] = None,
         top_k: int = 20,
     ) -> List[Dict]:
         """
@@ -203,6 +204,13 @@ class PhotoIndex:
         for path, info in images.items():
             score = 0.0
             matched = True
+
+            # 路徑子字串篩選（資料夾、檔名等）
+            if path_contains:
+                if path_contains not in path:
+                    matched = False
+                else:
+                    score += 0.5
 
             # 人臉篩選
             if face_name:
