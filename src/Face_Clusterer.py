@@ -86,6 +86,7 @@ class FaceClusterer:
         eps: float = 0.4,
         min_samples: int = 2,
         per_day: int = 8,
+        from_cache: bool = False,
     ) -> Dict:
         """
         分層抽樣人臉分群。
@@ -96,6 +97,8 @@ class FaceClusterer:
             eps: DBSCAN 距離閾值
             min_samples: DBSCAN 最少樣本數
             per_day: 每天抽幾張（預設 8）
+            from_cache: 跳過 Phase 1 擴充，僅用既有 face_clusters.pkl
+                        作為 Phase 2 輸入。用於補跑 Phase 3 而不影響 cluster id。
         """
         # 載入 labels
         LOGGER.info("Loading labels from %s", labels_path)
@@ -105,31 +108,45 @@ class FaceClusterer:
         image_paths = [r["path"] for r in labels_data.get("results", []) if "error" not in r]
         LOGGER.info("Total images: %d", len(image_paths))
 
-        # 分層抽樣：按日期分組，每天抽 per_day 張
-        date_groups = defaultdict(list)
-        for path in image_paths:
-            date = extract_date(path)
-            date_groups[date].append(path)
-
-        LOGGER.info("Unique dates: %d", len(date_groups))
-
-        # 抽樣
-        sampled_paths = []
-        for date, paths in sorted(date_groups.items()):
-            if len(paths) <= per_day:
-                sampled_paths.extend(paths)
-            else:
-                # 隨機抽 per_day 張
-                rng = np.random.RandomState(hash(date) % 2**31)
-                indices = rng.choice(len(paths), size=per_day, replace=False)
-                sampled_paths.extend([paths[i] for i in indices])
-
-        LOGGER.info("Sampled: %d images (%.1f%%) from %d dates",
-                     len(sampled_paths), len(sampled_paths) / len(image_paths) * 100, len(date_groups))
-
-        # Phase 1: 偵測抽樣圖片的人臉
         emb_path = Path(output_path).with_suffix(".pkl")
-        sample_data = self._detect_faces_batch(sampled_paths, emb_path, desc="Sampling")
+
+        if from_cache:
+            # 跳過抽樣與 Phase 1 擴充；直接讀既有 cache 作為 Phase 2 輸入
+            if not emb_path.exists():
+                raise FileNotFoundError(
+                    f"--from-cache 需要 {emb_path}，但檔案不存在。"
+                    "請先正常跑一次 Face_Clusterer 產生 Phase 1 cache。"
+                )
+            LOGGER.info("[from-cache] Loading existing Phase 1 cache from %s", emb_path)
+            with open(emb_path, "rb") as f:
+                sample_data = pickle.load(f)
+            LOGGER.info("[from-cache] Cache has %d faces from %d images",
+                         len(sample_data["embeddings"]),
+                         len(set(sample_data["image_paths"])))
+        else:
+            # 分層抽樣：按日期分組，每天抽 per_day 張
+            date_groups = defaultdict(list)
+            for path in image_paths:
+                date = extract_date(path)
+                date_groups[date].append(path)
+
+            LOGGER.info("Unique dates: %d", len(date_groups))
+
+            # 抽樣
+            sampled_paths = []
+            for date, paths in sorted(date_groups.items()):
+                if len(paths) <= per_day:
+                    sampled_paths.extend(paths)
+                else:
+                    rng = np.random.RandomState(hash(date) % 2**31)
+                    indices = rng.choice(len(paths), size=per_day, replace=False)
+                    sampled_paths.extend([paths[i] for i in indices])
+
+            LOGGER.info("Sampled: %d images (%.1f%%) from %d dates",
+                         len(sampled_paths), len(sampled_paths) / len(image_paths) * 100, len(date_groups))
+
+            # Phase 1
+            sample_data = self._detect_faces_batch(sampled_paths, emb_path, desc="Sampling")
 
         # Phase 2: 分群
         clusters, centroids = self._cluster(sample_data, eps, min_samples)
@@ -317,6 +334,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--eps", type=float, default=0.4)
     p.add_argument("--min-samples", type=int, default=2)
     p.add_argument("--per-day", type=int, default=8, help="每天抽幾張（預設 8）")
+    p.add_argument("--from-cache", action="store_true",
+                   help="跳過 Phase 1 擴充，僅用既有 face_clusters.pkl 作 Phase 2 輸入。"
+                        "用於補跑 Phase 3 不洗掉既有 cluster id 與命名。")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
     _setup_logging(args.log_level)
@@ -328,6 +348,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         eps=args.eps,
         min_samples=args.min_samples,
         per_day=args.per_day,
+        from_cache=args.from_cache,
     )
     return 0
 
