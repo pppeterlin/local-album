@@ -99,7 +99,8 @@ uv run python src/Photo_Search.py data/embeddings/photos.pkl \
 │   ├── Photo_Search.py          Semantic + keyword search CLI
 │   ├── face_naming_server.py    Web UI for naming face clusters
 │   ├── face_naming_helper.py    CLI alternative for naming
-│   └── generate_face_thumbs.py  Face thumbnail extractor
+│   ├── generate_face_thumbs.py  Face thumbnail extractor
+│   └── mcp_server.py            MCP server (query-only, for agents)
 ├── scripts/
 │   └── run_pipeline.sh          End-to-end driver (index → sample → label)
 ├── data/                        All generated artifacts (gitignored)
@@ -189,6 +190,55 @@ all EXIF (including GPS and timestamps). Originals are never sent.
 
 CJK queries are auto-detected and translated to English via the same
 Vision API (CLIP's text tower is English-trained).
+
+---
+
+## Agent access (MCP server)
+
+Once the index is built, `src/mcp_server.py` exposes it to any
+MCP-compatible client (Claude Code, Claude Desktop, etc.) as a set of
+read-only query tools — agents can search your library without you
+having to wire up CLI calls.
+
+```bash
+# Verify it loads
+uv run python src/mcp_server.py    # stdio server (no output until a client connects)
+```
+
+**Register with Claude Code:**
+
+```bash
+claude mcp add local-album \
+    uv --directory "$(pwd)" run python src/mcp_server.py
+```
+
+**Or add to Claude Desktop's `claude_desktop_config.json`:**
+
+```json
+{
+  "mcpServers": {
+    "local-album": {
+      "command": "uv",
+      "args": ["--directory", "/absolute/path/to/local-album",
+               "run", "python", "src/mcp_server.py"]
+    }
+  }
+}
+```
+
+**Exposed tools (read-only):**
+
+| Tool | Purpose |
+|---|---|
+| `search_photos(query, face, year, month, location, top_k)` | Combined filter search over labels, faces, EXIF date, GPS |
+| `list_faces(named_only, unnamed_only, top_n)` | Browse face clusters, largest first |
+| `get_photo(path)` | Full record (label, faces, time, location) for one image |
+| `index_stats()` | Counts: total images, images with EXIF/GPS/faces, named clusters |
+
+Indexing, labeling, and clustering remain CLI-only by design — those
+operations take minutes-to-hours and aren't suited to agent invocation.
+Run them with `scripts/run_pipeline.sh` and the CLIs above, then let
+agents query the result.
 
 ---
 

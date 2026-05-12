@@ -7,3 +7,4 @@ openai>=1.40
 insightface>=0.7.3
 onnxruntime>=1.16
 opencv-python>=4.8
+mcp>=1.2.0
