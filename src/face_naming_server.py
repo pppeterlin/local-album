@@ -425,7 +425,7 @@ h1{text-align:center;margin-bottom:6px}
 .expand-tools button{padding:5px 12px;font-size:12px;border-radius:5px;border:1px solid #444;background:#222;color:#ccc;cursor:pointer}
 .expand-tools button.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
 .expand-tools .hint{color:#666;font-size:11px;margin-left:4px}
-.select-bar{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:2px solid #4fc3f7;border-radius:30px;padding:10px 22px;box-shadow:0 4px 24px rgba(0,0,0,.6);gap:12px;align-items:center;z-index:90}
+.select-bar{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:2px solid #4fc3f7;border-radius:30px;padding:10px 22px;box-shadow:0 4px 24px rgba(0,0,0,.6);gap:12px;align-items:center;z-index:200}
 .select-bar.active{display:flex}
 .select-bar .count{color:#4fc3f7;font-weight:600}
 .select-bar button{padding:7px 14px;border-radius:18px;border:none;cursor:pointer;font-size:13px;font-weight:600}
