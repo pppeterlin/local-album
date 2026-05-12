@@ -63,26 +63,26 @@ def _load_index() -> PhotoIndex:
 def search_photos(
     query: str = "",
     face: str | None = None,
+    faces_all: list[str] | None = None,
     year: int | None = None,
     month: int | None = None,
     location: str | None = None,
     path_contains: str | None = None,
     top_k: int = 20,
 ) -> list[dict[str, Any]]:
-    """Search the photo index by any combination of filters.
-
-    Filters are combined with AND — each one narrows the result set.
-    Use this to compose queries like "childhood photos with grandpa" in
-    a single call (e.g. face='阿公', path_contains='小時候').
+    """Search the photo index by any combination of filters (AND).
 
     Args:
         query:         Substring to match against image labels (case-insensitive).
-        face:          Face cluster ID (e.g. "face_0") OR display name (e.g. "Mom").
-        year:          Filter by EXIF year (e.g. 2023).
-        month:         Filter by EXIF month (1-12).
+        face:          Single face filter (cluster ID like "face_0" OR display
+                       name like "Mom"). Use this for "photos containing X".
+        faces_all:     Multiple-face filter — EVERY name/id in the list must
+                       appear in the photo. Use for group-shot queries:
+                       faces_all=["阿公", "媽媽"] → photos with both.
+        year:          EXIF year (e.g. 2023).
+        month:         EXIF month (1-12).
         location:      Substring match against location field.
-        path_contains: Substring match against the file path (folder name,
-                       subdir, filename — useful for scoping to an album).
+        path_contains: Substring match against the file path.
         top_k:         Max results (default 20).
 
     Returns:
@@ -93,6 +93,7 @@ def search_photos(
     return idx.search(
         query=query,
         face_name=face,
+        faces_all=faces_all,
         year=year,
         month=month,
         location=location,
