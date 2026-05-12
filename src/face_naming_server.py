@@ -23,6 +23,7 @@ NAMES_FILE = FACES_DIR / "face_names.json"
 REMOVED_FILE = FACES_DIR / "face_removed.json"
 SKIPPED_FILE = FACES_DIR / "face_skipped.json"
 MERGES_FILE = FACES_DIR / "face_merges.json"
+MOVES_FILE = FACES_DIR / "face_moves.json"
 THUMBS_DIR = FACES_DIR / "face_thumbs"
 PAGE_SIZE = 20
 
@@ -42,10 +43,12 @@ def load_names():   return load_json(NAMES_FILE)
 def load_removed(): return load_json(REMOVED_FILE, {})
 def load_skipped(): return load_json(SKIPPED_FILE, [])
 def load_merges():  return load_json(MERGES_FILE, {})
+def load_moves():   return load_json(MOVES_FILE, [])
 def save_names(n):  save_json(NAMES_FILE, n)
 def save_removed(r): save_json(REMOVED_FILE, r)
 def save_skipped(s): save_json(SKIPPED_FILE, s)
 def save_merges(m): save_json(MERGES_FILE, m)
+def save_moves(m):  save_json(MOVES_FILE, m)
 
 
 def _resolve_target(merges, fid):
@@ -160,6 +163,27 @@ class Handler(SimpleHTTPRequestHandler):
                 save_removed(removed)
             self.json_response({"ok": True})
 
+        elif path == "/api/move":
+            # 把單張照片從 from_id 群移到 to_id 群
+            moves = load_moves()
+            from_id = body.get("from_id")
+            to_id = body.get("to_id")
+            img_path = body.get("image_path")
+            if from_id and to_id and img_path and from_id != to_id:
+                # 移除同一張的舊紀錄（避免重複）
+                moves = [m for m in moves if m.get("path") != img_path]
+                moves.append({"path": img_path, "from": from_id, "to": to_id})
+                save_moves(moves)
+            self.json_response({"ok": True})
+
+        elif path == "/api/unmove":
+            moves = load_moves()
+            img_path = body.get("image_path")
+            if img_path:
+                moves = [m for m in moves if m.get("path") != img_path]
+                save_moves(moves)
+            self.json_response({"ok": True})
+
         else:
             self.send_error(404)
 
@@ -210,6 +234,7 @@ class Handler(SimpleHTTPRequestHandler):
         removed = load_removed()
         skipped = set(load_skipped())
         merges = load_merges()
+        moves = load_moves()
         clusters = faces.get("clusters", {})
 
         # 反查：每個最終 target 收哪些 source
@@ -219,6 +244,18 @@ class Handler(SimpleHTTPRequestHandler):
             if final != src:
                 merge_back[final].append(src)
 
+        # 索引 moves：from_id → {path: to_id}, to_id → [paths]
+        moves_out: dict[str, dict[str, str]] = defaultdict(dict)
+        moves_in: dict[str, list[str]] = defaultdict(list)
+        for m in moves:
+            f, t, p = m.get("from"), m.get("to"), m.get("path")
+            if f and t and p:
+                # 如果 from 已被合併走，解析到最終 target
+                f_final = _resolve_target(merges, f)
+                t_final = _resolve_target(merges, t)
+                moves_out[f_final][p] = t_final
+                moves_in[t_final].append(p)
+
         result = []
         for fid, info in clusters.items():
             # source cluster 被折疊到 target，不獨立顯示
@@ -227,13 +264,22 @@ class Handler(SimpleHTTPRequestHandler):
 
             own_imgs = list(info.get("images", []))
             merged_srcs = merge_back.get(fid, [])
-            # 合併進來的 images 串到後面
             for s in merged_srcs:
                 own_imgs.extend(clusters.get(s, {}).get("images", []))
 
             # 去重保序
             seen = set()
             all_imgs = [x for x in own_imgs if not (x in seen or seen.add(x))]
+
+            # 被移出此群（顯示層級）：moves.from == fid 且 to != fid
+            moved_away = set(moves_out.get(fid, {}).keys())
+
+            # 被移入此群
+            moved_in = moves_in.get(fid, [])
+            for p in moved_in:
+                if p not in seen:
+                    all_imgs.append(p)
+                    seen.add(p)
 
             # 已移除（target + 所有 source 的）
             rem = list(removed.get(fid, []))
@@ -243,7 +289,8 @@ class Handler(SimpleHTTPRequestHandler):
                         rem.append(img)
             rem_set = set(rem)
 
-            active = [img for img in all_imgs if img not in rem_set]
+            active = [img for img in all_imgs
+                      if img not in rem_set and img not in moved_away]
 
             result.append({
                 "id": fid,
@@ -254,6 +301,8 @@ class Handler(SimpleHTTPRequestHandler):
                 "removed": rem,
                 "skipped": fid in skipped,
                 "merged_from": merged_srcs,
+                "moved_in_count": len([p for p in moved_in if p not in rem_set]),
+                "moved_away_count": len(moved_away),
             })
 
         # filter
@@ -355,8 +404,11 @@ h1{text-align:center;margin-bottom:6px}
 .expand-photos{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
 .expand-photos .thumb-wrap{position:relative}
 .expand-photos img{width:100%;aspect-ratio:1;object-fit:cover;cursor:pointer}
-.expand-photos .remove-btn{position:absolute;top:2px;right:2px;width:22px;height:22px;border-radius:50%;background:rgba(239,83,80,.85);color:#fff;border:none;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s}
-.expand-photos .thumb-wrap:hover .remove-btn{opacity:1}
+.expand-photos .thumb-actions{position:absolute;top:2px;right:2px;display:flex;gap:3px;opacity:0;transition:opacity .15s}
+.expand-photos .thumb-wrap:hover .thumb-actions{opacity:1}
+.expand-photos .thumb-actions button{width:22px;height:22px;border-radius:50%;border:none;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;color:#fff;padding:0}
+.expand-photos .move-btn{background:rgba(76,175,80,.85)}
+.expand-photos .remove-btn{background:rgba(239,83,80,.85)}
 .actions{display:flex;gap:6px;padding:10px 14px;border-top:1px solid #2a2a2a;flex-wrap:wrap}
 .actions input{flex:1;min-width:120px;padding:7px 10px;border:1px solid #333;border-radius:5px;background:#222;color:#fff;font-size:13px}
 .actions input:focus{border-color:#4fc3f7;outline:none}
@@ -412,6 +464,19 @@ h1{text-align:center;margin-bottom:6px}
   </div>
 </div>
 
+<div class="modal" id="moveModal">
+  <div class="modal-box">
+    <h3>把這張照片移到哪個群組？</h3>
+    <div id="movePreview" style="text-align:center;margin-bottom:12px"></div>
+    <input type="text" id="moveFilter" placeholder="輸入名稱或 ID 過濾..." oninput="filterMoveOptions()">
+    <select id="moveTarget" size="10"></select>
+    <div class="modal-actions">
+      <button class="btn btn-skip" onclick="closeMove()">取消</button>
+      <button class="btn btn-save" onclick="confirmMove()">移動</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let ITEMS = [];
 let currentPage = 0;
@@ -420,7 +485,9 @@ let totalCount = 0;
 let filter = 'all';
 let viewMode = 'grid';  // 'grid' | 'list'，list 只有 named filter 下可用
 let mergeSource = '';
-let allClusters = [];  // 給合併下拉用，按需 fetch
+let moveSource = '';   // 來源 cluster id
+let movePath = '';     // 要移動的圖片路徑
+let allClusters = [];  // 給合併/移動下拉用，按需 fetch
 
 loadStats();
 loadPage(0);
@@ -547,12 +614,16 @@ function renderCard(c){
     `<img src="/image/${img}" onclick="window.open(this.src)">`
   ).join('');
 
-  const allImgs = c.images.map(img=>
-    `<div class="thumb-wrap">
+  const allImgs = c.images.map(img=>{
+    const safeImg = img.replace(/'/g,"\\'");
+    return `<div class="thumb-wrap">
       <img src="/image/${img}" onclick="window.open(this.src)">
-      <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${img.replace(/'/g,"\\'")}')" title="移除">✕</button>
-    </div>`
-  ).join('');
+      <div class="thumb-actions">
+        <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群">→</button>
+        <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除">✕</button>
+      </div>
+    </div>`;
+  }).join('');
 
   const removedImgs = (c.removed||[]).map(img=>
     `<div class="thumb-wrap">
@@ -582,8 +653,14 @@ function renderCard(c){
   }
 
   const hasRemoved = (c.removed||[]).length > 0;
-  const mergedBadge = (c.merged_from||[]).length > 0
-    ? `<div class="merged-badge">已合併 ${c.merged_from.length} 群</div>` : '';
+  const badges = [];
+  if((c.merged_from||[]).length > 0)
+    badges.push(`<div class="merged-badge">已合併 ${c.merged_from.length} 群</div>`);
+  if(c.moved_in_count > 0)
+    badges.push(`<div class="merged-badge" style="background:#2a4a3a;color:#a5d6a7">← 移入 ${c.moved_in_count} 張</div>`);
+  if(c.moved_away_count > 0)
+    badges.push(`<div class="merged-badge" style="background:#4a3a2a;color:#ffcc80">→ 移出 ${c.moved_away_count} 張</div>`);
+  const mergedBadge = badges.join('');
 
   return `
     <div class="${cls}" id="card_${fid}">
@@ -689,6 +766,48 @@ function confirmMerge(){
 }
 
 function closeMerge(){document.getElementById('mergeModal').classList.remove('active');}
+
+function openMove(fid, imgPath){
+  moveSource = fid;
+  movePath = imgPath;
+  document.getElementById('moveFilter').value = '';
+  document.getElementById('movePreview').innerHTML =
+    `<img src="/image/${imgPath}" style="max-height:140px;border-radius:6px;border:2px solid #333">
+     <div style="color:#888;font-size:12px;margin-top:6px">來自 ${fid}</div>`;
+  fetch('/api/clusters').then(r=>r.json()).then(list=>{
+    allClusters = list.filter(c=>c.id !== fid);
+    renderMoveOptions(allClusters);
+    document.getElementById('moveModal').classList.add('active');
+    setTimeout(()=>document.getElementById('moveFilter').focus(),50);
+  });
+}
+
+function renderMoveOptions(list){
+  const sel = document.getElementById('moveTarget');
+  sel.innerHTML = list.map(c=>
+    `<option value="${c.id}">${c.id}${c.name?' · '+c.name:''} (${c.count} 張)</option>`
+  ).join('');
+}
+
+function filterMoveOptions(){
+  const q = document.getElementById('moveFilter').value.toLowerCase();
+  const filtered = q ? allClusters.filter(c=>
+    c.id.toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q)
+  ) : allClusters;
+  renderMoveOptions(filtered);
+}
+
+function confirmMove(){
+  const tgt = document.getElementById('moveTarget').value;
+  if(!tgt) return;
+  post('/api/move',{from_id:moveSource, to_id:tgt, image_path:movePath}).then(()=>{
+    closeMove();
+    loadStats();
+    loadPage(currentPage);
+  });
+}
+
+function closeMove(){document.getElementById('moveModal').classList.remove('active');}
 
 function removeImg(fid,img){
   post('/api/remove',{face_id:fid,image_path:img}).then(()=>{
