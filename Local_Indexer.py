@@ -50,6 +50,9 @@ def iter_images(root: Path) -> Iterator[Path]:
                         if entry.is_dir(follow_symlinks=False):
                             stack.append(entry.path)
                         elif entry.is_file(follow_symlinks=False):
+                            # 跳過 macOS 資源檔 (._xxx)
+                            if entry.name.startswith("._"):
+                                continue
                             ext = os.path.splitext(entry.name)[1].lower()
                             if ext in SUPPORTED_EXTS:
                                 yield Path(entry.path)
