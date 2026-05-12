@@ -412,8 +412,6 @@ h1{text-align:center;margin-bottom:6px}
 .photo-grid img:hover{opacity:.8}
 .expand-bar{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#1f1f1f;border-top:1px solid #2a2a2a;cursor:pointer;font-size:13px;color:#888}
 .expand-bar:hover{background:#252525;color:#ccc}
-.expand-content{display:none;padding:10px 14px;background:#151515}
-.expand-content.open{display:block}
 .expand-photos{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
 .expand-photos .thumb-wrap{position:relative}
 .expand-photos img{width:100%;aspect-ratio:1;object-fit:cover;cursor:pointer}
@@ -448,6 +446,17 @@ h1{text-align:center;margin-bottom:6px}
 .modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.85);z-index:100;justify-content:center;align-items:center}
 .modal.active{display:flex}
 .modal-box{background:#1a1a1a;padding:24px;border-radius:12px;max-width:480px;width:90%;border:1px solid #333}
+.expand-modal{align-items:flex-start;padding:24px 0}
+.expand-modal .expand-box{background:#161616;border:1px solid #333;border-radius:12px;width:min(1400px,95vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column}
+.expand-header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #2a2a2a;flex-shrink:0}
+.expand-header h3{color:#4fc3f7;font-size:18px}
+.expand-header .meta{color:#888;font-size:13px;margin-left:10px}
+.expand-header .close{background:#333;color:#ccc;border:none;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:16px}
+.expand-header .close:hover{background:#444}
+.expand-body{padding:14px 20px;overflow-y:auto;flex:1}
+.expand-modal .expand-photos{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.expand-modal .expand-photos .thumb-wrap img{border-radius:6px}
+.expand-modal .removed-grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px}
 .modal-box h3{margin-bottom:16px}
 .modal-box input[type=text]{width:100%;padding:8px 10px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;margin-bottom:8px}
 .modal-box select{width:100%;padding:10px;margin-bottom:16px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;max-height:300px}
@@ -491,6 +500,19 @@ h1{text-align:center;margin-bottom:6px}
   </div>
 </div>
 
+<div class="modal expand-modal" id="expandModal" onclick="if(event.target===this)closeExpand()">
+  <div class="expand-box">
+    <div class="expand-header">
+      <div>
+        <h3 id="expandTitle"></h3>
+        <span class="meta" id="expandMeta"></span>
+      </div>
+      <button class="close" onclick="closeExpand()">✕</button>
+    </div>
+    <div class="expand-body" id="expandBody"></div>
+  </div>
+</div>
+
 <div class="select-bar" id="selectBar">
   <span class="count" id="selectCount">0</span>
   <span style="color:#aaa">張已選</span>
@@ -522,12 +544,24 @@ let mergeSource = '';
 let moveSource = '';   // 來源 cluster id
 let movePath = '';     // 單張移動的圖片路徑（null 代表 batch）
 let allClusters = [];  // 給合併/移動下拉用，按需 fetch
-let expandedCards = new Set();  // 記住展開狀態，跨 re-render
+let openExpandFid = null;       // 目前 modal 展開的 cluster id（單一）
 let selectMode = null;          // 多選模式作用中的 cluster id
 let selectedPaths = new Set();  // 已選中的照片路徑
 
 loadStats();
 loadPage(0);
+
+// Esc 關 modal
+document.addEventListener('keydown', e=>{
+  if(e.key !== 'Escape') return;
+  if(document.getElementById('expandModal').classList.contains('active')){
+    closeExpand();
+  } else if(document.getElementById('moveModal').classList.contains('active')){
+    closeMove();
+  } else if(document.getElementById('mergeModal').classList.contains('active')){
+    closeMerge();
+  }
+});
 
 function loadStats(){
   fetch('/api/stats').then(r=>r.json()).then(d=>{
@@ -651,40 +685,6 @@ function renderCard(c){
     `<img src="/image/${img}" onclick="window.open(this.src)">`
   ).join('');
 
-  const inSelect = selectMode === fid;
-  const allImgs = c.images.map(img=>{
-    const safeImg = img.replace(/'/g,"\\'");
-    const isSel = inSelect && selectedPaths.has(img);
-    const wrapCls = 'thumb-wrap' + (inSelect?' selectable':'') + (isSel?' selected':'');
-    const imgClick = inSelect
-      ? `onclick="toggleThumbSelect('${fid}','${safeImg}')"`
-      : `onclick="window.open('/image/${img}')"`;
-    const actions = inSelect ? '' : `
-      <div class="thumb-actions">
-        <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群">→</button>
-        <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除">✕</button>
-      </div>`;
-    return `<div class="${wrapCls}" data-thumb="${fid}|${img}">
-      <img src="/image/${img}" ${imgClick}>
-      ${actions}
-    </div>`;
-  }).join('');
-
-  const expandTools = `
-    <div class="expand-tools">
-      <button class="${inSelect?'active':''}" onclick="toggleSelectMode('${fid}')">
-        ${inSelect ? '✓ 多選中' : '🔲 多選'}
-      </button>
-      ${inSelect ? '<span class="hint">點縮圖切換選取；底部 bar 移動</span>' : ''}
-    </div>`;
-
-  const removedImgs = (c.removed||[]).map(img=>
-    `<div class="thumb-wrap">
-      <img src="/image/${img}">
-      <button class="restore-btn" onclick="restoreImg('${fid}','${img.replace(/'/g,"\\'")}')" title="恢復">↩</button>
-    </div>`
-  ).join('');
-
   let actions = '';
   if(isSkipped){
     actions = `<span style="color:#666">已略過</span>
@@ -705,7 +705,6 @@ function renderCard(c){
     `;
   }
 
-  const hasRemoved = (c.removed||[]).length > 0;
   const badges = [];
   if((c.merged_from||[]).length > 0)
     badges.push(`<div class="merged-badge">已合併 ${c.merged_from.length} 群</div>`);
@@ -726,45 +725,106 @@ function renderCard(c){
         <img class="face-thumb" src="/thumb/${fid}.jpg" onerror="this.style.display='none'">
       </div>
       <div class="photo-grid">${previewImgs}</div>
-      <div class="expand-bar" onclick="toggleExpand('${fid}')">
+      <div class="expand-bar" onclick="openExpand('${fid}')">
         <span>📂 展開查看全部 ${c.count} 張</span>
-        <span id="arrow_${fid}">▼</span>
-      </div>
-      <div class="expand-content ${expandedCards.has(fid)?'open':''}" id="expand_${fid}">
-        ${expandTools}
-        <div class="expand-photos">${allImgs}</div>
-        ${hasRemoved?`<div style="padding:8px 0 4px;color:#666;font-size:12px">已移除 (${c.removed.length}):</div>
-          <div class="removed-grid">${removedImgs}</div>`:''}
+        <span>↗</span>
       </div>
       <div class="actions">${actions}</div>
     </div>
   `;
 }
 
-function toggleExpand(fid){
-  const el = document.getElementById('expand_'+fid);
-  const arrow = document.getElementById('arrow_'+fid);
-  const open = el.classList.toggle('open');
-  if(open) expandedCards.add(fid); else expandedCards.delete(fid);
-  arrow.textContent = open?'▲':'▼';
+function openExpand(fid){
+  openExpandFid = fid;
+  // 多選狀態跟著 expand 走（若不同 cluster，重置）
+  if(selectMode && selectMode !== fid){
+    selectMode = null;
+    selectedPaths.clear();
+    renderSelectBar();
+  }
+  renderExpandBody();
+  document.getElementById('expandModal').classList.add('active');
+}
+
+function closeExpand(){
+  document.getElementById('expandModal').classList.remove('active');
+  openExpandFid = null;
+  if(selectMode){
+    selectMode = null;
+    selectedPaths.clear();
+    renderSelectBar();
+  }
+}
+
+function renderExpandBody(){
+  if(!openExpandFid) return;
+  const c = ITEMS.find(x=>x.id===openExpandFid);
+  if(!c){ closeExpand(); return; }
+  const fid = c.id;
+  const inSelect = selectMode === fid;
+
+  document.getElementById('expandTitle').textContent = c.name ? `${fid} · ${c.name}` : fid;
+  document.getElementById('expandMeta').textContent =
+    `${c.count} 張${c.count!==c.original_count?' (原 '+c.original_count+')':''}`;
+
+  const allImgs = c.images.map(img=>{
+    const safeImg = img.replace(/'/g,"\\'");
+    const isSel = inSelect && selectedPaths.has(img);
+    const wrapCls = 'thumb-wrap' + (inSelect?' selectable':'') + (isSel?' selected':'');
+    const imgClick = inSelect
+      ? `onclick="toggleThumbSelect('${fid}','${safeImg}')"`
+      : `onclick="window.open('/image/${img}')"`;
+    const actions = inSelect ? '' : `
+      <div class="thumb-actions">
+        <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群">→</button>
+        <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除">✕</button>
+      </div>`;
+    return `<div class="${wrapCls}" data-thumb="${fid}|${img}">
+      <img src="/image/${img}" ${imgClick}>
+      ${actions}
+    </div>`;
+  }).join('');
+
+  const removedImgs = (c.removed||[]).map(img=>
+    `<div class="thumb-wrap">
+      <img src="/image/${img}">
+      <button class="restore-btn" onclick="restoreImg('${fid}','${img.replace(/'/g,"\\'")}')" title="恢復">↩</button>
+    </div>`
+  ).join('');
+
+  const tools = `
+    <div class="expand-tools">
+      <button class="${inSelect?'active':''}" onclick="toggleSelectMode('${fid}')">
+        ${inSelect ? '✓ 多選中' : '🔲 多選'}
+      </button>
+      ${inSelect ? '<span class="hint">點縮圖切換選取；底部 bar 移動</span>' : ''}
+    </div>`;
+
+  const removedSection = (c.removed||[]).length > 0
+    ? `<div style="padding:14px 0 6px;color:#666;font-size:12px">已移除 (${c.removed.length})：</div>
+       <div class="removed-grid">${removedImgs}</div>`
+    : '';
+
+  document.getElementById('expandBody').innerHTML =
+    `${tools}<div class="expand-photos">${allImgs}</div>${removedSection}`;
 }
 
 function toggleSelectMode(fid){
   if(selectMode === fid){
-    exitSelectMode();
+    selectMode = null;
+    selectedPaths.clear();
   } else {
     selectMode = fid;
     selectedPaths.clear();
-    expandedCards.add(fid);  // 保證該 card 是展開的
-    renderGrid();
-    renderSelectBar();
   }
+  renderExpandBody();
+  renderSelectBar();
 }
 
 function exitSelectMode(){
   selectMode = null;
   selectedPaths.clear();
-  renderGrid();
+  if(openExpandFid) renderExpandBody();
   renderSelectBar();
 }
 
@@ -930,12 +990,12 @@ function closeMove(){document.getElementById('moveModal').classList.remove('acti
 
 function removeImg(fid,img){
   post('/api/remove',{face_id:fid,image_path:img}).then(()=>{
-    // 局部更新（避免關掉展開）
     const c=ITEMS.find(x=>x.id===fid);
     if(c){
       c.images=c.images.filter(i=>i!==img);
       c.removed=[...(c.removed||[]),img];
       c.count=c.images.length;
+      if(openExpandFid===fid) renderExpandBody();
       renderGrid();
     }
   });
@@ -948,6 +1008,7 @@ function restoreImg(fid,img){
       c.images.push(img);
       c.removed=(c.removed||[]).filter(i=>i!==img);
       c.count=c.images.length;
+      if(openExpandFid===fid) renderExpandBody();
       renderGrid();
     }
   });
