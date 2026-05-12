@@ -184,6 +184,19 @@ class Handler(SimpleHTTPRequestHandler):
                 save_moves(moves)
             self.json_response({"ok": True})
 
+        elif path == "/api/move-batch":
+            moves = load_moves()
+            from_id = body.get("from_id")
+            to_id = body.get("to_id")
+            paths = body.get("paths", [])
+            if from_id and to_id and paths and from_id != to_id:
+                ps = set(paths)
+                moves = [m for m in moves if m.get("path") not in ps]
+                for p in paths:
+                    moves.append({"path": p, "from": from_id, "to": to_id})
+                save_moves(moves)
+            self.json_response({"ok": True, "moved": len(paths)})
+
         else:
             self.send_error(404)
 
@@ -404,8 +417,22 @@ h1{text-align:center;margin-bottom:6px}
 .expand-photos{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
 .expand-photos .thumb-wrap{position:relative}
 .expand-photos img{width:100%;aspect-ratio:1;object-fit:cover;cursor:pointer}
+.expand-photos .thumb-wrap{position:relative}
 .expand-photos .thumb-actions{position:absolute;top:2px;right:2px;display:flex;gap:3px;opacity:0;transition:opacity .15s}
 .expand-photos .thumb-wrap:hover .thumb-actions{opacity:1}
+.expand-photos .thumb-wrap.selectable img{cursor:pointer}
+.expand-photos .thumb-wrap.selected{outline:3px solid #4fc3f7;outline-offset:-3px}
+.expand-photos .thumb-wrap.selected::after{content:'✓';position:absolute;top:4px;left:4px;width:22px;height:22px;background:#4fc3f7;color:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700}
+.expand-tools{display:flex;gap:8px;padding:4px 0 10px;align-items:center}
+.expand-tools button{padding:5px 12px;font-size:12px;border-radius:5px;border:1px solid #444;background:#222;color:#ccc;cursor:pointer}
+.expand-tools button.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
+.expand-tools .hint{color:#666;font-size:11px;margin-left:4px}
+.select-bar{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:2px solid #4fc3f7;border-radius:30px;padding:10px 22px;box-shadow:0 4px 24px rgba(0,0,0,.6);gap:12px;align-items:center;z-index:90}
+.select-bar.active{display:flex}
+.select-bar .count{color:#4fc3f7;font-weight:600}
+.select-bar button{padding:7px 14px;border-radius:18px;border:none;cursor:pointer;font-size:13px;font-weight:600}
+.select-bar .btn-go{background:#4fc3f7;color:#000}
+.select-bar .btn-cancel{background:#333;color:#ccc}
 .expand-photos .thumb-actions button{width:22px;height:22px;border-radius:50%;border:none;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;color:#fff;padding:0}
 .expand-photos .move-btn{background:rgba(76,175,80,.85)}
 .expand-photos .remove-btn{background:rgba(239,83,80,.85)}
@@ -464,6 +491,13 @@ h1{text-align:center;margin-bottom:6px}
   </div>
 </div>
 
+<div class="select-bar" id="selectBar">
+  <span class="count" id="selectCount">0</span>
+  <span style="color:#aaa">張已選</span>
+  <button class="btn-go" onclick="moveSelected()">→ 移到別群</button>
+  <button class="btn-cancel" onclick="exitSelectMode()">取消</button>
+</div>
+
 <div class="modal" id="moveModal">
   <div class="modal-box">
     <h3>把這張照片移到哪個群組？</h3>
@@ -486,8 +520,11 @@ let filter = 'all';
 let viewMode = 'grid';  // 'grid' | 'list'，list 只有 named filter 下可用
 let mergeSource = '';
 let moveSource = '';   // 來源 cluster id
-let movePath = '';     // 要移動的圖片路徑
+let movePath = '';     // 單張移動的圖片路徑（null 代表 batch）
 let allClusters = [];  // 給合併/移動下拉用，按需 fetch
+let expandedCards = new Set();  // 記住展開狀態，跨 re-render
+let selectMode = null;          // 多選模式作用中的 cluster id
+let selectedPaths = new Set();  // 已選中的照片路徑
 
 loadStats();
 loadPage(0);
@@ -614,16 +651,32 @@ function renderCard(c){
     `<img src="/image/${img}" onclick="window.open(this.src)">`
   ).join('');
 
+  const inSelect = selectMode === fid;
   const allImgs = c.images.map(img=>{
     const safeImg = img.replace(/'/g,"\\'");
-    return `<div class="thumb-wrap">
-      <img src="/image/${img}" onclick="window.open(this.src)">
+    const isSel = inSelect && selectedPaths.has(img);
+    const wrapCls = 'thumb-wrap' + (inSelect?' selectable':'') + (isSel?' selected':'');
+    const imgClick = inSelect
+      ? `onclick="toggleThumbSelect('${fid}','${safeImg}')"`
+      : `onclick="window.open('/image/${img}')"`;
+    const actions = inSelect ? '' : `
       <div class="thumb-actions">
         <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群">→</button>
         <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除">✕</button>
-      </div>
+      </div>`;
+    return `<div class="${wrapCls}" data-thumb="${fid}|${img}">
+      <img src="/image/${img}" ${imgClick}>
+      ${actions}
     </div>`;
   }).join('');
+
+  const expandTools = `
+    <div class="expand-tools">
+      <button class="${inSelect?'active':''}" onclick="toggleSelectMode('${fid}')">
+        ${inSelect ? '✓ 多選中' : '🔲 多選'}
+      </button>
+      ${inSelect ? '<span class="hint">點縮圖切換選取；底部 bar 移動</span>' : ''}
+    </div>`;
 
   const removedImgs = (c.removed||[]).map(img=>
     `<div class="thumb-wrap">
@@ -677,7 +730,8 @@ function renderCard(c){
         <span>📂 展開查看全部 ${c.count} 張</span>
         <span id="arrow_${fid}">▼</span>
       </div>
-      <div class="expand-content" id="expand_${fid}">
+      <div class="expand-content ${expandedCards.has(fid)?'open':''}" id="expand_${fid}">
+        ${expandTools}
         <div class="expand-photos">${allImgs}</div>
         ${hasRemoved?`<div style="padding:8px 0 4px;color:#666;font-size:12px">已移除 (${c.removed.length}):</div>
           <div class="removed-grid">${removedImgs}</div>`:''}
@@ -690,8 +744,64 @@ function renderCard(c){
 function toggleExpand(fid){
   const el = document.getElementById('expand_'+fid);
   const arrow = document.getElementById('arrow_'+fid);
-  el.classList.toggle('open');
-  arrow.textContent = el.classList.contains('open')?'▲':'▼';
+  const open = el.classList.toggle('open');
+  if(open) expandedCards.add(fid); else expandedCards.delete(fid);
+  arrow.textContent = open?'▲':'▼';
+}
+
+function toggleSelectMode(fid){
+  if(selectMode === fid){
+    exitSelectMode();
+  } else {
+    selectMode = fid;
+    selectedPaths.clear();
+    expandedCards.add(fid);  // 保證該 card 是展開的
+    renderGrid();
+    renderSelectBar();
+  }
+}
+
+function exitSelectMode(){
+  selectMode = null;
+  selectedPaths.clear();
+  renderGrid();
+  renderSelectBar();
+}
+
+function toggleThumbSelect(fid, img){
+  if(selectMode !== fid) return;
+  if(selectedPaths.has(img)) selectedPaths.delete(img);
+  else selectedPaths.add(img);
+  // 只更新該縮圖 class，不重渲整個 grid
+  const el = document.querySelector(`[data-thumb="${fid}|${img}"]`);
+  if(el) el.classList.toggle('selected', selectedPaths.has(img));
+  renderSelectBar();
+}
+
+function renderSelectBar(){
+  const bar = document.getElementById('selectBar');
+  if(selectedPaths.size === 0){
+    bar.classList.remove('active');
+    return;
+  }
+  bar.classList.add('active');
+  document.getElementById('selectCount').textContent = selectedPaths.size;
+}
+
+function moveSelected(){
+  if(!selectMode || selectedPaths.size === 0) return;
+  moveSource = selectMode;
+  movePath = null;  // null = batch
+  document.getElementById('moveFilter').value = '';
+  document.getElementById('movePreview').innerHTML =
+    `<div style="color:#4fc3f7;font-size:15px">批次移動 ${selectedPaths.size} 張</div>
+     <div style="color:#888;font-size:12px;margin-top:4px">來自 ${moveSource}</div>`;
+  fetch('/api/clusters').then(r=>r.json()).then(list=>{
+    allClusters = list.filter(c=>c.id !== moveSource);
+    renderMoveOptions(allClusters);
+    document.getElementById('moveModal').classList.add('active');
+    setTimeout(()=>document.getElementById('moveFilter').focus(),50);
+  });
 }
 
 function saveName(fid){
@@ -800,8 +910,17 @@ function filterMoveOptions(){
 function confirmMove(){
   const tgt = document.getElementById('moveTarget').value;
   if(!tgt) return;
-  post('/api/move',{from_id:moveSource, to_id:tgt, image_path:movePath}).then(()=>{
+  const isBatch = movePath === null;
+  const req = isBatch
+    ? post('/api/move-batch',{from_id:moveSource, to_id:tgt, paths:[...selectedPaths]})
+    : post('/api/move',{from_id:moveSource, to_id:tgt, image_path:movePath});
+  req.then(()=>{
     closeMove();
+    if(isBatch){
+      selectMode = null;
+      selectedPaths.clear();
+      renderSelectBar();
+    }
     loadStats();
     loadPage(currentPage);
   });
