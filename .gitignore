@@ -42,3 +42,4 @@ labels*.json
 *.onnx
 *.bin
 .env
+face_thumbs/
