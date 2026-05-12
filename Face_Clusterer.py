@@ -1,12 +1,13 @@
 """
-Face_Clusterer.py — 本地人臉偵測與分群
+Face_Clusterer.py — 人臉偵測與分群（分層抽樣優化版）
 
-使用 InsightFace (ArcFace) 進行人臉偵測 + 編碼，再用 DBSCAN 分群。
-輸出：每張圖片包含哪些人臉群組。
+策略：
+  1. 按日期分層抽樣（同一天高機率相同的人）
+  2. 每個日期抽 N 張做臉偵測
+  3. 用抽樣結果做分群
+  4. 其餘圖片分配到最近的群組
 
-用法：
-  python Face_Clusterer.py labels.json -o face_clusters.json
-  python Face_Clusterer.py labels.json --eps 0.4 --min-samples 2
+這樣 57K 張圖可能只需要處理 3-5K 張就能建立完整人臉索引。
 """
 
 from __future__ import annotations
@@ -17,85 +18,66 @@ import logging
 import os
 import pickle
 import sys
+from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import gc
 
 LOGGER = logging.getLogger("FaceClusterer")
 
 
-class FaceClusterer:
-    """人臉偵測 + 編碼 + 分群。"""
+def extract_date(path: str) -> str:
+    """從檔名或 EXIF 嘗試提取日期。"""
+    import re
+    basename = os.path.basename(path)
+    # 嚴格匹配：IMG_20230815_xxx.jpg 或 2023-08-15_xxx.jpg
+    m = re.match(r'.*?(\d{4})(\d{2})(\d{2})[_\-]', basename)
+    if m:
+        y, mo, d = m.group(1), m.group(2), m.group(3)
+        if 1990 <= int(y) <= 2030 and 1 <= int(mo) <= 12 and 1 <= int(d) <= 31:
+            return f"{y}-{mo}-{d}"
+    # 從路徑中的年份目錄提取
+    parts = Path(path).parts
+    for part in parts:
+        m = re.match(r'^(\d{4})$', part)
+        if m and 1990 <= int(m.group(1)) <= 2030:
+            return m.group(1)
+    return "unknown"
 
-    def __init__(
-        self,
-        model_name: str = "buffalo_l",
-        det_size: int = 640,
-        device: Optional[str] = None,
-    ):
+
+class FaceClusterer:
+    """人臉偵測 + 編碼 + 分群（分層抽樣版）。"""
+
+    def __init__(self, model_name: str = "buffalo_l", det_size: int = 640):
         self.model_name = model_name
         self.det_size = det_size
-        self.device = device or self._select_device()
         self.app = None
 
-    @staticmethod
-    def _select_device() -> str:
-        """自動選擇裝置。"""
-        try:
-            import torch
-            if torch.backends.mps.is_available():
-                return "mps"
-            if torch.cuda.is_available():
-                return "cuda"
-        except ImportError:
-            pass
-        return "cpu"
-
     def _init_model(self):
-        """延遲載入模型。"""
         if self.app is not None:
             return
-
-        import insightface
         from insightface.app import FaceAnalysis
-
-        LOGGER.info("Loading InsightFace %s on %s ...", self.model_name, self.device)
-        self.app = FaceAnalysis(
-            name=self.model_name,
-            root="~/.insightface",
-            allowed_modules=["detection", "recognition"],
-        )
-        # InsightFace 用 CPU provider（MPS 不支援 ONNX）
-        providers = ["CPUExecutionProvider"]
+        LOGGER.info("Loading InsightFace %s (det_size=%d) ...", self.model_name, self.det_size)
+        self.app = FaceAnalysis(name=self.model_name, root="~/.insightface",
+                                allowed_modules=["detection", "recognition"])
         self.app.prepare(ctx_id=-1, det_size=(self.det_size, self.det_size))
         LOGGER.info("InsightFace ready")
 
     def detect_faces(self, image_path: str) -> List[Dict]:
-        """
-        偵測圖片中的人臉，回傳人臉資訊列表。
-
-        Returns:
-            [{"bbox": [x1,y1,x2,y2], "embedding": np.ndarray(512,), "det_score": float}, ...]
-        """
         import cv2
-
         self._init_model()
-
         img = cv2.imread(image_path)
         if img is None:
-            LOGGER.warning("Cannot read image: %s", image_path)
             return []
-
+        h, w = img.shape[:2]
+        if max(h, w) > 1280:
+            scale = 1280 / max(h, w)
+            img = cv2.resize(img, (int(w * scale), int(h * scale)))
         faces = self.app.get(img)
-        results = []
-        for face in faces:
-            results.append({
-                "bbox": face.bbox.tolist(),
-                "embedding": face.embedding,  # 512-dim, L2-normalized
-                "det_score": float(face.det_score),
-            })
-        return results
+        return [{"bbox": f.bbox.tolist(), "embedding": f.embedding, "det_score": float(f.det_score)} for f in faces]
 
     def process_all_images(
         self,
@@ -103,133 +85,218 @@ class FaceClusterer:
         output_path: str,
         eps: float = 0.4,
         min_samples: int = 2,
-        max_images: Optional[int] = None,
+        per_day: int = 8,
     ) -> Dict:
         """
-        處理所有圖片，偵測人臉並分群。
+        分層抽樣人臉分群。
 
         Args:
             labels_path: labels.json 路徑
-            output_path: face_clusters.json 輸出路徑
-            eps: DBSCAN cosine 距離閾值（0.3~0.5）
+            output_path: face_clusters.json 路徑
+            eps: DBSCAN 距離閾值
             min_samples: DBSCAN 最少樣本數
-            max_images: 最多處理幾張圖片（測試用）
-
-        Returns:
-            face_clusters.json 結構
+            per_day: 每天抽幾張（預設 8）
         """
         # 載入 labels
         LOGGER.info("Loading labels from %s", labels_path)
         with open(labels_path, "r", encoding="utf-8") as f:
             labels_data = json.load(f)
 
-        image_paths = []
-        for r in labels_data.get("results", []):
-            if "error" not in r:
-                image_paths.append(r["path"])
+        image_paths = [r["path"] for r in labels_data.get("results", []) if "error" not in r]
+        LOGGER.info("Total images: %d", len(image_paths))
 
-        if max_images:
-            image_paths = image_paths[:max_images]
+        # 分層抽樣：按日期分組，每天抽 per_day 張
+        date_groups = defaultdict(list)
+        for path in image_paths:
+            date = extract_date(path)
+            date_groups[date].append(path)
 
-        LOGGER.info("Total images to process: %d", len(image_paths))
+        LOGGER.info("Unique dates: %d", len(date_groups))
 
-        # 偵測所有人臉
-        all_embeddings: List[np.ndarray] = []
-        all_image_indices: List[int] = []  # 對應 image_paths 的 index
-        all_bboxes: List[List[float]] = []
-        image_faces: Dict[str, List[Dict]] = {}  # path → [{bbox, face_id}, ...]
+        # 抽樣
+        sampled_paths = []
+        for date, paths in sorted(date_groups.items()):
+            if len(paths) <= per_day:
+                sampled_paths.extend(paths)
+            else:
+                # 隨機抽 per_day 張
+                rng = np.random.RandomState(hash(date) % 2**31)
+                indices = rng.choice(len(paths), size=per_day, replace=False)
+                sampled_paths.extend([paths[i] for i in indices])
 
-        for i, path in enumerate(image_paths):
-            if (i + 1) % 100 == 0:
-                LOGGER.info("Detecting faces: %d / %d", i + 1, len(image_paths))
+        LOGGER.info("Sampled: %d images (%.1f%%) from %d dates",
+                     len(sampled_paths), len(sampled_paths) / len(image_paths) * 100, len(date_groups))
+
+        # Phase 1: 偵測抽樣圖片的人臉
+        emb_path = Path(output_path).with_suffix(".pkl")
+        sample_data = self._detect_faces_batch(sampled_paths, emb_path, desc="Sampling")
+
+        # Phase 2: 分群
+        clusters, centroids = self._cluster(sample_data, eps, min_samples)
+
+        # Phase 3: 把所有圖片的人臉分配到群組
+        # 先檢查是否已有完整的偵測結果
+        full_emb_path = Path(output_path).with_name("face_embeddings_full.pkl")
+        if full_emb_path.exists():
+            LOGGER.info("Loading full face embeddings from %s", full_emb_path)
+            with open(full_emb_path, "rb") as f:
+                all_data = pickle.load(f)
+        else:
+            # 偵測所有圖片
+            all_data = self._detect_faces_batch(image_paths, full_emb_path, desc="Full scan")
+
+        result = self._assign_and_save(all_data, clusters, centroids, output_path)
+
+        # 清理
+        gc.collect()
+        return result
+
+    def _detect_faces_batch(self, paths: List[str], emb_path: Path, desc: str = "") -> Dict:
+        """批次偵測人臉，增量存檔。"""
+        # 檢查 checkpoint
+        existing = {"image_paths": [], "embeddings": [], "bboxes": [], "det_scores": []}
+        if emb_path.exists():
+            LOGGER.info("Loading checkpoint from %s", emb_path)
+            with open(emb_path, "rb") as f:
+                existing = pickle.load(f)
+            existing_set = set(existing["image_paths"])
+            new_paths = [p for p in paths if p not in existing_set]
+            if not new_paths:
+                LOGGER.info("All %d images already processed", len(paths))
+                return existing
+            LOGGER.info("Resuming: %d existing, %d new", len(existing["image_paths"]), len(new_paths))
+        else:
+            new_paths = paths
+
+        new_data = {"image_paths": [], "embeddings": [], "bboxes": [], "det_scores": []}
+
+        for i, path in enumerate(new_paths):
+            if (i + 1) % 200 == 0:
+                LOGGER.info("[%s] %d / %d (faces so far: %d)",
+                           desc, i + 1, len(new_paths), len(existing["embeddings"]) + len(new_data["embeddings"]))
 
             faces = self.detect_faces(path)
-            if not faces:
-                continue
-
-            image_faces[path] = []
             for face in faces:
-                idx = len(all_embeddings)
-                all_embeddings.append(face["embedding"])
-                all_image_indices.append(i)
-                all_bboxes.append(face["bbox"])
-                image_faces[path].append({
-                    "bbox": face["bbox"],
-                    "det_score": face["det_score"],
-                    "embedding_index": idx,
-                })
+                new_data["image_paths"].append(path)
+                new_data["embeddings"].append(face["embedding"])
+                new_data["bboxes"].append(face["bbox"])
+                new_data["det_scores"].append(face["det_score"])
 
-        total_faces = len(all_embeddings)
-        LOGGER.info("Total faces detected: %d in %d images", total_faces, len(image_faces))
+            # 每 1000 張存 checkpoint
+            if (i + 1) % 1000 == 0 and new_data["embeddings"]:
+                merged = self._merge(existing, new_data)
+                with open(emb_path, "wb") as f:
+                    pickle.dump(merged, f, protocol=pickle.HIGHEST_PROTOCOL)
+                LOGGER.info("[%s] Checkpoint: %d faces", desc, len(merged["embeddings"]))
+                gc.collect()
 
-        if total_faces == 0:
-            LOGGER.warning("No faces detected!")
-            return {"n_clusters": 0, "n_faces": 0, "images": {}, "clusters": {}}
+        # 最終存檔
+        merged = self._merge(existing, new_data)
+        with open(emb_path, "wb") as f:
+            pickle.dump(merged, f, protocol=pickle.HIGHEST_PROTOCOL)
+        LOGGER.info("[%s] Done: %d faces in %d images", desc, len(merged["embeddings"]), len(set(merged["image_paths"])))
 
-        # 分群
+        return merged
+
+    def _merge(self, a: Dict, b: Dict) -> Dict:
+        return {
+            "image_paths": a["image_paths"] + b["image_paths"],
+            "embeddings": a["embeddings"] + b["embeddings"],
+            "bboxes": a["bboxes"] + b["bboxes"],
+            "det_scores": a["det_scores"] + b["det_scores"],
+        }
+
+    def _cluster(self, data: Dict, eps: float, min_samples: int) -> Tuple:
+        """DBSCAN 分群。"""
         from sklearn.cluster import DBSCAN
 
-        embeddings_matrix = np.array(all_embeddings)  # (N, 512)
-        # InsightFace embeddings 已經 L2-normalized，cosine = dot product
-        # DBSCAN metric="cosine" 會用 1 - cosine_similarity
-        LOGGER.info("Clustering %d faces with DBSCAN(eps=%.3f, min_samples=%d)",
-                     total_faces, eps, min_samples)
+        total = len(data["embeddings"])
+        if total == 0:
+            return {}, np.array([])
+
+        embeddings = np.array(data["embeddings"])
+        LOGGER.info("Clustering %d faces with DBSCAN(eps=%.3f, min_samples=%d)", total, eps, min_samples)
 
         clustering = DBSCAN(eps=eps, min_samples=min_samples, metric="cosine", n_jobs=-1)
-        labels = clustering.fit_predict(embeddings_matrix)
+        labels = clustering.fit_predict(embeddings)
 
         n_clusters = len(set(labels) - {-1})
-        n_noise = int((labels == -1).sum())
-        LOGGER.info("Clusters=%d, noise=%d", n_clusters, n_noise)
+        LOGGER.info("Clusters=%d, noise=%d", n_clusters, int((labels == -1).sum()))
 
-        # 建立結果
-        # 1. 每個 cluster 的資訊
-        clusters: Dict[str, Dict] = {}
+        # 計算質心
+        centroids = []
         for cid in range(n_clusters):
             mask = labels == cid
+            c = embeddings[mask].mean(axis=0)
+            c = c / (np.linalg.norm(c) + 1e-12)
+            centroids.append(c)
+
+        # 建立 sample 的 cluster mapping
+        clusters = {}
+        for i in range(total):
+            clusters[i] = int(labels[i])
+
+        return clusters, np.array(centroids) if centroids else np.array([])
+
+    def _assign_and_save(self, all_data: Dict, sample_clusters: Dict, centroids: np.ndarray, output_path: str) -> Dict:
+        """分配所有人臉到群組並存檔。"""
+        total = len(all_data["embeddings"])
+        all_embeddings = np.array(all_data["embeddings"])
+        image_paths = all_data["image_paths"]
+
+        # 分配
+        assignments = np.full(total, -1, dtype=int)
+
+        if len(centroids) > 0:
+            LOGGER.info("Assigning %d faces to nearest cluster...", total)
+            for i in range(total):
+                sims = all_embeddings[i] @ centroids.T
+                best = np.argmax(sims)
+                if sims[best] > 0.3:
+                    assignments[i] = int(best)
+
+        # 建立結果
+        n_clusters = len(centroids) if len(centroids) > 0 else 0
+        clusters_info: Dict[str, Dict] = {}
+        for cid in range(n_clusters):
+            mask = assignments == cid
             indices = np.where(mask)[0]
-            # 找出這個 cluster 出現在哪些圖片
-            cluster_images = set()
-            for idx in indices:
-                cluster_images.add(image_paths[all_image_indices[idx]])
-            clusters[f"face_{cid}"] = {
+            cluster_images = list(set(image_paths[i] for i in indices))
+            clusters_info[f"face_{cid}"] = {
                 "id": cid,
                 "count": int(mask.sum()),
-                "images": list(cluster_images),
+                "images": cluster_images,
             }
 
-        # 2. 每張圖片的 face 資訊
         images_result: Dict[str, List[Dict]] = {}
-        for path, faces_info in image_faces.items():
-            images_result[path] = []
-            for face_info in faces_info:
-                emb_idx = face_info["embedding_index"]
-                cluster_id = int(labels[emb_idx])
-                face_label = f"face_{cluster_id}" if cluster_id >= 0 else "unknown"
-                images_result[path].append({
-                    "bbox": face_info["bbox"],
-                    "det_score": face_info["det_score"],
-                    "face_id": face_label,
-                    "cluster": cluster_id,
-                })
+        for i in range(total):
+            path = image_paths[i]
+            cid = int(assignments[i])
+            if path not in images_result:
+                images_result[path] = []
+            images_result[path].append({
+                "bbox": all_data["bboxes"][i],
+                "det_score": all_data["det_scores"][i],
+                "face_id": f"face_{cid}" if cid >= 0 else "unknown",
+                "cluster": cid,
+            })
+
+        n_noise = int((assignments == -1).sum())
 
         result = {
             "model": f"insightface/{self.model_name}",
-            "n_images": len(image_paths),
-            "n_faces": total_faces,
+            "n_images": len(set(image_paths)),
+            "n_faces": total,
             "n_clusters": n_clusters,
             "n_noise": n_noise,
-            "eps": eps,
-            "min_samples": min_samples,
-            "clusters": clusters,
+            "clusters": clusters_info,
             "images": images_result,
         }
 
-        # 存檔
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
-        LOGGER.info("Saved → %s", output_path)
+        LOGGER.info("Saved → %s (%d faces, %d clusters)", output_path, total, n_clusters)
 
         return result
 
@@ -242,30 +309,25 @@ def _setup_logging(level: str) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    p = argparse.ArgumentParser(description="本地人臉偵測與分群（InsightFace + DBSCAN）")
+    p = argparse.ArgumentParser(description="人臉偵測與分群（分層抽樣版）")
     p.add_argument("labels", help="labels.json 路徑")
-    p.add_argument("-o", "--output", default="face_clusters.json", help="輸出檔案")
-    p.add_argument("--model", default="buffalo_l", help="InsightFace 模型名稱")
-    p.add_argument("--det-size", type=int, default=640, help="偵測圖片大小")
-    p.add_argument("--eps", type=float, default=0.4, help="DBSCAN cosine 距離閾值（0.3~0.5）")
-    p.add_argument("--min-samples", type=int, default=2, help="DBSCAN 最少樣本數")
-    p.add_argument("--max-images", type=int, default=None, help="最多處理幾張（測試用）")
-    p.add_argument("--device", default=None, help="強制裝置")
+    p.add_argument("-o", "--output", default="face_clusters.json")
+    p.add_argument("--model", default="buffalo_l")
+    p.add_argument("--det-size", type=int, default=640)
+    p.add_argument("--eps", type=float, default=0.4)
+    p.add_argument("--min-samples", type=int, default=2)
+    p.add_argument("--per-day", type=int, default=8, help="每天抽幾張（預設 8）")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
     _setup_logging(args.log_level)
 
-    clusterer = FaceClusterer(
-        model_name=args.model,
-        det_size=args.det_size,
-        device=args.device,
-    )
+    clusterer = FaceClusterer(model_name=args.model, det_size=args.det_size)
     clusterer.process_all_images(
         labels_path=args.labels,
         output_path=args.output,
         eps=args.eps,
         min_samples=args.min_samples,
-        max_images=args.max_images,
+        per_day=args.per_day,
     )
     return 0
 
