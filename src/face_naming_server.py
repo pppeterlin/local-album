@@ -577,7 +577,7 @@ function loadStats(){
 function loadPage(page){
   document.getElementById('spinner').style.display = 'block';
   document.getElementById('grid').innerHTML = '';
-  fetch(`/api/page?page=${page}&filter=${filter}`).then(r=>r.json()).then(d=>{
+  return fetch(`/api/page?page=${page}&filter=${filter}`).then(r=>r.json()).then(d=>{
     ITEMS = d.items;
     currentPage = d.page;
     totalPages = d.total_pages;
@@ -585,6 +585,8 @@ function loadPage(page){
     renderGrid();
     renderPager();
     document.getElementById('spinner').style.display = 'none';
+    // 如果 expand modal 還開著，刷新內容
+    if(openExpandFid) renderExpandBody();
   });
 }
 
