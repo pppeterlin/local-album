@@ -28,7 +28,7 @@ import pickle
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple, Set, Tuple
 
 import numpy as np
 
@@ -54,6 +54,7 @@ class PhotoIndex:
 
         # 載入索引
         self.index: Dict = {}
+
         if self.index_path.exists():
             self.index = json.loads(self.index_path.read_text(encoding="utf-8"))
 
@@ -66,6 +67,17 @@ class PhotoIndex:
         self.location_names: Dict[str, str] = {}
         if self.location_names_path.exists():
             self.location_names = json.loads(self.location_names_path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _load_overlay(path: Path, default):
+        """讀 overlay JSON；不存在或壞掉就回 default。"""
+        if not path.exists():
+            return default
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            LOGGER.warning("Failed to read overlay %s: %s", path, e)
+            return default
 
     def build(
         self,
@@ -137,24 +149,65 @@ class PhotoIndex:
 
             LOGGER.info("Merged EXIF data")
 
-        # 3. 載入人臉分群（如果有 face_clusters.json）
+        # 3. 載入人臉分群 + 套用人工 overlay（merges / moves / removed）
         if faces_path and Path(faces_path).exists():
             LOGGER.info("Loading face clusters from %s", faces_path)
             with open(faces_path, "r", encoding="utf-8") as f:
                 faces_data = json.load(f)
 
-            for path, faces in faces_data.get("images", {}).items():
-                if path in images:
-                    for face in faces:
-                        face_id = face["face_id"]
-                        face_name = self.face_names.get(face_id, face_id)
-                        images[path]["faces"].append({
-                            "id": face_id,
-                            "name": face_name,
-                            "det_score": face["det_score"],
-                        })
+            faces_dir = Path(faces_path).parent
+            merges = self._load_overlay(faces_dir / "face_merges.json", {})
+            moves_list = self._load_overlay(faces_dir / "face_moves.json", [])
+            removed = self._load_overlay(faces_dir / "face_removed.json", {})
+            LOGGER.info("Overlays: %d merges, %d moves, removed across %d clusters",
+                         len(merges), len(moves_list), len(removed))
 
-            LOGGER.info("Merged face data")
+            def resolve(fid):
+                seen = set()
+                while fid in merges and fid not in seen:
+                    seen.add(fid)
+                    fid = merges[fid]
+                return fid
+
+            # moves index：(path, resolved_from_fid) → resolved_to_fid
+            moves_idx: Dict[Tuple[str, str], str] = {}
+            for m in moves_list:
+                p, f, t = m.get("path"), m.get("from"), m.get("to")
+                if p and f and t:
+                    moves_idx[(p, resolve(f))] = resolve(t)
+
+            # removed：按解析後 fid 聚合
+            effective_removed: Dict[str, set] = {}
+            for fid, paths in removed.items():
+                eff = resolve(fid)
+                effective_removed.setdefault(eff, set()).update(paths)
+
+            applied = {"moved": 0, "removed": 0, "merged": 0}
+            for path, faces in faces_data.get("images", {}).items():
+                if path not in images:
+                    continue
+                for face in faces:
+                    raw_fid = face["face_id"]
+                    eff_fid = resolve(raw_fid)
+                    if eff_fid != raw_fid:
+                        applied["merged"] += 1
+                    # apply move（特定 path 上指定 fid 的人臉被搬走）
+                    move_key = (path, eff_fid)
+                    if move_key in moves_idx:
+                        eff_fid = moves_idx[move_key]
+                        applied["moved"] += 1
+                    # apply remove
+                    if path in effective_removed.get(eff_fid, ()):
+                        applied["removed"] += 1
+                        continue
+                    images[path]["faces"].append({
+                        "id": eff_fid,
+                        "name": self.face_names.get(eff_fid, eff_fid),
+                        "det_score": face["det_score"],
+                    })
+
+            LOGGER.info("Merged face data (applied: %d merged, %d moved, %d removed)",
+                         applied["merged"], applied["moved"], applied["removed"])
 
         # 4. 建立索引
         self.index = {
