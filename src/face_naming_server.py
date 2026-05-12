@@ -321,6 +321,18 @@ h1{text-align:center;margin-bottom:6px}
 .pager input{width:56px;padding:6px;text-align:center;background:#222;color:#fff;border:1px solid #333;border-radius:6px}
 .pager .info{color:#888;font-size:13px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px}
+.list{display:flex;flex-direction:column;gap:6px}
+.list-row{display:grid;grid-template-columns:48px 90px 1fr 80px auto;align-items:center;gap:14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:8px 14px}
+.list-row:hover{border-color:#444}
+.list-row .lr-thumb{width:40px;height:40px;border-radius:50%;object-fit:cover;border:2px solid #4fc3f7}
+.list-row .lr-id{color:#888;font-size:12px;font-family:monospace}
+.list-row .lr-name{color:#4fc3f7;font-weight:600;font-size:15px;cursor:text;padding:4px 8px;border-radius:4px;min-height:28px}
+.list-row .lr-name:hover{background:#222}
+.list-row .lr-name-input{width:100%;padding:5px 8px;background:#222;color:#fff;border:1px solid #4fc3f7;border-radius:4px;font-size:14px}
+.list-row .lr-count{color:#888;font-size:13px;text-align:right}
+.list-row .lr-actions{display:flex;gap:6px}
+.list-row .lr-actions button{padding:5px 10px;font-size:12px;border-radius:4px;border:1px solid #444;background:#222;color:#ccc;cursor:pointer}
+.list-row .lr-actions button:hover{background:#2a2a2a}
 .card{background:#1a1a1a;border-radius:10px;border:2px solid #2a2a2a;overflow:hidden;transition:border-color .2s}
 .card:hover{border-color:#444}
 .card.named{border-color:#4fc3f7}
@@ -378,6 +390,7 @@ h1{text-align:center;margin-bottom:6px}
   <button data-filter="unnamed" onclick="setFilter('unnamed')">未命名</button>
   <button data-filter="named" onclick="setFilter('named')">已命名</button>
   <button data-filter="skipped" onclick="setFilter('skipped')">已略過</button>
+  <button id="viewToggle" onclick="toggleView()" style="display:none;margin-left:14px">📋 清單模式</button>
 </div>
 
 <div class="stats" id="stats"></div>
@@ -405,6 +418,7 @@ let currentPage = 0;
 let totalPages = 1;
 let totalCount = 0;
 let filter = 'all';
+let viewMode = 'grid';  // 'grid' | 'list'，list 只有 named filter 下可用
 let mergeSource = '';
 let allClusters = [];  // 給合併下拉用，按需 fetch
 
@@ -453,7 +467,73 @@ function renderPager(){
 
 function renderGrid(){
   const grid = document.getElementById('grid');
-  grid.innerHTML = ITEMS.map(c => renderCard(c)).join('');
+  if(viewMode === 'list' && filter === 'named'){
+    grid.className = 'list';
+    grid.innerHTML = ITEMS.map(c => renderListRow(c)).join('');
+  } else {
+    grid.className = 'grid';
+    grid.innerHTML = ITEMS.map(c => renderCard(c)).join('');
+  }
+}
+
+function renderListRow(c){
+  const fid = c.id;
+  return `
+    <div class="list-row" id="row_${fid}">
+      <img class="lr-thumb" src="/thumb/${fid}.jpg" onerror="this.style.visibility='hidden'">
+      <div class="lr-id">${fid}</div>
+      <div class="lr-name" id="name_${fid}" onclick="editNameInline('${fid}')">${c.name}</div>
+      <div class="lr-count">${c.count} 張</div>
+      <div class="lr-actions">
+        <button onclick="editNameInline('${fid}')">✏️ 改名</button>
+        <button onclick="openMerge('${fid}')">🔗 合併</button>
+        <button onclick="undoAction('${fid}')">↩ 取消命名</button>
+      </div>
+    </div>
+  `;
+}
+
+function editNameInline(fid){
+  const c = ITEMS.find(x=>x.id===fid);
+  if(!c) return;
+  const cell = document.getElementById('name_'+fid);
+  if(!cell) return;
+  const current = c.name || '';
+  cell.innerHTML = `<input class="lr-name-input" id="inp_${fid}" value="${current.replace(/"/g,'&quot;')}"
+    onblur="commitInlineName('${fid}')"
+    onkeydown="if(event.key==='Enter')commitInlineName('${fid}');else if(event.key==='Escape')cancelInlineName('${fid}')">`;
+  const inp = document.getElementById('inp_'+fid);
+  inp.focus();
+  inp.select();
+}
+
+function commitInlineName(fid){
+  const inp = document.getElementById('inp_'+fid);
+  if(!inp) return;
+  const v = inp.value.trim();
+  const c = ITEMS.find(x=>x.id===fid);
+  if(!c) return;
+  if(!v){ cancelInlineName(fid); return; }
+  if(v === c.name){ cancelInlineName(fid); return; }
+  post('/api/name',{face_id:fid,name:v}).then(()=>{
+    c.name = v;
+    document.getElementById('name_'+fid).textContent = v;
+    loadStats();
+  });
+}
+
+function cancelInlineName(fid){
+  const c = ITEMS.find(x=>x.id===fid);
+  if(!c) return;
+  const cell = document.getElementById('name_'+fid);
+  if(cell) cell.textContent = c.name || '';
+}
+
+function toggleView(){
+  viewMode = viewMode === 'grid' ? 'list' : 'grid';
+  document.getElementById('viewToggle').textContent =
+    viewMode === 'list' ? '🖼 圖片模式' : '📋 清單模式';
+  renderGrid();
 }
 
 function renderCard(c){
@@ -637,7 +717,18 @@ function restoreImg(fid,img){
 
 function setFilter(f){
   filter=f;
-  document.querySelectorAll('.toolbar button').forEach(b=>b.classList.toggle('active',b.dataset.filter===f));
+  document.querySelectorAll('.toolbar button[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter===f));
+  // 清單模式只在 named filter 下可用
+  const tgl = document.getElementById('viewToggle');
+  if(f === 'named'){
+    tgl.style.display = '';
+  } else {
+    tgl.style.display = 'none';
+    if(viewMode === 'list'){
+      viewMode = 'grid';
+      tgl.textContent = '📋 清單模式';
+    }
+  }
   loadPage(0);
 }
 
