@@ -174,6 +174,7 @@ class PhotoIndex:
         self,
         query: str = "",
         face_name: Optional[str] = None,
+        faces_all: Optional[List[str]] = None,
         year: Optional[int] = None,
         month: Optional[int] = None,
         location: Optional[str] = None,
@@ -212,14 +213,24 @@ class PhotoIndex:
                 else:
                     score += 0.5
 
-            # 人臉篩選
+            # 人臉篩選（單一）
+            img_faces = info.get("faces", [])
+            face_ids = [f["id"] for f in img_faces]
+            face_names_in_img = [f["name"] for f in img_faces]
             if face_name:
-                face_ids = [f["id"] for f in info.get("faces", [])]
-                face_names = [f["name"] for f in info.get("faces", [])]
-                if face_name not in face_ids and face_name not in face_names:
+                if face_name not in face_ids and face_name not in face_names_in_img:
                     matched = False
                 else:
                     score += 1.0
+
+            # 多人合照篩選（AND，每個都要出現）
+            if faces_all:
+                for f in faces_all:
+                    if f not in face_ids and f not in face_names_in_img:
+                        matched = False
+                        break
+                else:
+                    score += 1.0 * len(faces_all)
 
             # 年份篩選
             if year and info.get("year") != year:
