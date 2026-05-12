@@ -1,16 +1,15 @@
 """
-Xiaomi_Labeler.py — 隱私脫敏與雲端標註（小米 MiMo Vision）
+Vision_Labeler.py — 隱私脫敏與雲端標註（OpenAI 相容 Vision API）
 
 針對 Smart_Sampler.py 採樣出的代表照片：
   1. 隱私保護：移除全部 EXIF（含 GPS、拍攝時間），重新編碼為純粹 JPEG。
   2. 等比縮放：長邊不超過 1024px。
-  3. 透過小米 MiMo Vision API（OpenAI 相容介面）取得標註結果，
-     輸出標準化 JSON。
+  3. 透過任何 OpenAI 相容 Vision API 取得標註結果，輸出標準化 JSON。
 
-API key / base url 透過建構參數或環境變數提供：
-    MIMO_API_KEY        （必填）
-    MIMO_BASE_URL       （可選，預設 https://api.xiaomimimo.com/v1）
-    MIMO_MODEL          （可選，預設 mimo-v2.5）
+API key / base url / model 透過建構參數或環境變數提供：
+    VISION_API_KEY      （必填）
+    VISION_BASE_URL     （可選，需指向 OpenAI 相容端點）
+    VISION_MODEL        （可選）
 """
 
 from __future__ import annotations
@@ -31,13 +30,13 @@ from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 Image.MAX_IMAGE_PIXELS = None
 
-LOGGER = logging.getLogger("XiaomiLabeler")
+LOGGER = logging.getLogger("VisionLabeler")
 
 DEFAULT_MAX_LONG_EDGE = 1024
 DEFAULT_TIMEOUT = 60
 DEFAULT_JPEG_QUALITY = 90
-DEFAULT_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1"
-DEFAULT_MODEL = "mimo-v2.5"
+DEFAULT_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_PROMPT = "请用中文描述这张图片的内容"
 DEFAULT_MAX_TOKENS = 500
 JPEG_MIME = "image/jpeg"
@@ -101,8 +100,8 @@ class PrivacyProcessor:
 
 # ---------- API 客戶端（OpenAI 相容） --------------------------------------
 
-class XiaomiVisionClient:
-    """以 OpenAI SDK 呼叫小米 MiMo 多模態 API。"""
+class VisionClient:
+    """以 OpenAI SDK 呼叫任何 OpenAI 相容的 Vision API。"""
 
     def __init__(
         self,
@@ -121,13 +120,13 @@ class XiaomiVisionClient:
                 "請先安裝 openai 套件：pip install openai>=1.0"
             ) from e
 
-        self.api_key = api_key or os.environ.get("MIMO_API_KEY")
+        self.api_key = api_key or os.environ.get("VISION_API_KEY")
         if not self.api_key:
             raise ValueError(
-                "缺少 MIMO_API_KEY。請傳入 api_key 或設定環境變數 MIMO_API_KEY。"
+                "缺少 VISION_API_KEY。請傳入 api_key 或設定環境變數 VISION_API_KEY。"
             )
-        self.base_url = base_url or os.environ.get("MIMO_BASE_URL", DEFAULT_BASE_URL)
-        self.model = model or os.environ.get("MIMO_MODEL", DEFAULT_MODEL)
+        self.base_url = base_url or os.environ.get("VISION_BASE_URL", DEFAULT_BASE_URL)
+        self.model = model or os.environ.get("VISION_MODEL", DEFAULT_MODEL)
         self.timeout = int(timeout)
         self.max_retries = max(1, int(max_retries))
         self.system_prompt = system_prompt or self._default_system_prompt()
@@ -143,10 +142,7 @@ class XiaomiVisionClient:
     @staticmethod
     def _default_system_prompt() -> str:
         today = datetime.now().strftime("%A, %B %d, %Y")
-        return (
-            f"You are MiMo, an AI assistant developed by Xiaomi. "
-            f"Today is date: {today}. Your knowledge cutoff date is December 2024."
-        )
+        return f"You are a helpful vision assistant. Today is {today}."
 
     def label(
         self,
@@ -201,16 +197,16 @@ class XiaomiVisionClient:
 
 # ---------- 主類別 ----------------------------------------------------------
 
-class XiaomiLabeler:
+class VisionLabeler:
     def __init__(
         self,
-        client: Optional[XiaomiVisionClient] = None,
+        client: Optional[VisionClient] = None,
         privacy: Optional[PrivacyProcessor] = None,
         prompt: str = DEFAULT_PROMPT,
         max_completion_tokens: int = DEFAULT_MAX_TOKENS,
         concurrency: int = 1,
     ):
-        self.client = client or XiaomiVisionClient()
+        self.client = client or VisionClient()
         self.privacy = privacy or PrivacyProcessor()
         self.prompt = prompt
         self.max_completion_tokens = int(max_completion_tokens)
@@ -368,10 +364,10 @@ def _setup_logging(level: str = "INFO") -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    p = argparse.ArgumentParser(description="小米 MiMo Vision 標註（含隱私脫敏前處理）")
+    p = argparse.ArgumentParser(description="Vision API 標註（OpenAI 相容，含隱私脫敏前處理）")
     p.add_argument("samples", help="Smart_Sampler 產出的 samples.json")
     p.add_argument("-o", "--output", default="labels.json")
-    p.add_argument("--api-key", default=None, help="覆蓋 MIMO_API_KEY")
+    p.add_argument("--api-key", default=None, help="覆蓋 VISION_API_KEY")
     p.add_argument("--base-url", default=None, help=f"預設 {DEFAULT_BASE_URL}")
     p.add_argument("--model", default=None, help=f"預設 {DEFAULT_MODEL}")
     p.add_argument("--prompt", default=DEFAULT_PROMPT)
@@ -388,7 +384,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     _setup_logging(args.log_level)
 
     extra_body = {"chat_template_kwargs": {"enable_thinking": False}} if args.no_reasoning else None
-    client = XiaomiVisionClient(
+    client = VisionClient(
         api_key=args.api_key,
         base_url=args.base_url,
         model=args.model,
@@ -400,7 +396,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         max_long_edge=args.max_long_edge,
         jpeg_quality=args.jpeg_quality,
     )
-    labeler = XiaomiLabeler(
+    labeler = VisionLabeler(
         client=client,
         privacy=privacy,
         prompt=args.prompt,

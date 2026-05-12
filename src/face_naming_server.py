@@ -15,10 +15,12 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import unquote, urlparse, parse_qs
 
-PROJECT_DIR = Path("/Users/chun/Documents/Python/Local Photo Labeler")
-FACES_FILE = PROJECT_DIR / "face_clusters.json"
-NAMES_FILE = PROJECT_DIR / "face_names.json"
-REMOVED_FILE = PROJECT_DIR / "face_removed.json"
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+FACES_DIR = PROJECT_DIR / "data" / "faces"
+FACES_FILE = FACES_DIR / "face_clusters.json"
+NAMES_FILE = FACES_DIR / "face_names.json"
+REMOVED_FILE = FACES_DIR / "face_removed.json"
+THUMBS_DIR = FACES_DIR / "face_thumbs"
 PAGE_SIZE = 20
 
 
@@ -53,7 +55,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.serve_file(img, "image/jpeg")
 
         elif path.startswith("/thumb/"):
-            thumb = PROJECT_DIR / "face_thumbs" / unquote(path[7:])
+            thumb = THUMBS_DIR / unquote(path[7:])
             self.serve_file(thumb, "image/jpeg")
 
         elif path == "/api/page":

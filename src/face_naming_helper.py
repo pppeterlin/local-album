@@ -11,9 +11,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROJECT_DIR = Path("/Users/chun/Documents/Python/Local Photo Labeler")
-FACES_FILE = PROJECT_DIR / "face_clusters.json"
-NAMES_FILE = PROJECT_DIR / "face_names.json"
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+FACES_DIR = PROJECT_DIR / "data" / "faces"
+FACES_FILE = FACES_DIR / "face_clusters.json"
+NAMES_FILE = FACES_DIR / "face_names.json"
 
 
 def load_faces():
@@ -32,9 +33,11 @@ def save_names(names):
 
 
 def open_images(paths):
-    """用 Finder 開啟圖片（macOS）。"""
+    """用系統預設圖片檢視器開啟（macOS: Preview / Linux: xdg-open）。"""
+    import platform
+    cmd = ["open"] if platform.system() == "Darwin" else ["xdg-open"]
     for p in paths:
-        subprocess.run(["open", "-a", "Preview", p], check=False)
+        subprocess.run(cmd + [p], check=False)
 
 
 def main():
@@ -85,7 +88,12 @@ def main():
 
     # 更新 photo_index.json
     print("\n更新索引...")
-    os.system(f'cd "{PROJECT_DIR}" && uv run python Photo_Index.py build --labels labels.json --faces face_clusters.json --embeddings embeddings.pkl')
+    labels = PROJECT_DIR / "data" / "labels" / "labels.json"
+    embeddings = PROJECT_DIR / "data" / "embeddings" / "embeddings.pkl"
+    os.system(
+        f'cd "{PROJECT_DIR}" && uv run python src/Photo_Index.py build '
+        f'--labels "{labels}" --faces "{FACES_FILE}" --embeddings "{embeddings}"'
+    )
 
     print("\n完成！")
     print(f"已命名：{len(names)} / {len(clusters)}")

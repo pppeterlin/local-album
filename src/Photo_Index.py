@@ -9,11 +9,13 @@ Photo_Index.py — 統一照片索引引擎
 
 支援組合查詢，輸出 JSON 或人類可讀格式。
 
-用法：
-  python Photo_Index.py build --labels labels.json --faces face_clusters.json
-  python Photo_Index.py search "2023年在海邊的照片"
-  python Photo_Index.py search "跟奶奶的照片" --face-name 奶奶
-  python Photo_Index.py name-face face_0 奶奶
+用法（從專案根目錄執行）：
+  python src/Photo_Index.py build \
+      --labels data/labels/photos.json \
+      --faces data/faces/face_clusters.json \
+      --embeddings data/embeddings/photos.pkl
+  python src/Photo_Index.py search "beach 2023"
+  python src/Photo_Index.py name-face face_0 grandma
 """
 
 from __future__ import annotations
@@ -43,9 +45,12 @@ class PhotoIndex:
 
     def __init__(self, project_dir: str):
         self.project_dir = Path(project_dir)
-        self.index_path = self.project_dir / "photo_index.json"
-        self.face_names_path = self.project_dir / FACE_NAMES_FILE
-        self.location_names_path = self.project_dir / LOCATION_NAMES_FILE
+        # 索引、人臉名稱、地點名稱統一放 data/index/、data/faces/
+        self.index_path = self.project_dir / "data" / "index" / "photo_index.json"
+        self.face_names_path = self.project_dir / "data" / "faces" / FACE_NAMES_FILE
+        self.location_names_path = self.project_dir / "data" / "index" / LOCATION_NAMES_FILE
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        self.face_names_path.parent.mkdir(parents=True, exist_ok=True)
 
         # 載入索引
         self.index: Dict = {}
@@ -264,7 +269,7 @@ class PhotoIndex:
             return []
 
         # 從 face_clusters.json 載入
-        faces_path = self.project_dir / "face_clusters.json"
+        faces_path = self.project_dir / "data" / "faces" / "face_clusters.json"
         if not faces_path.exists():
             return []
 
@@ -287,7 +292,7 @@ class PhotoIndex:
         if not self.index:
             return {}
 
-        faces_path = self.project_dir / "face_clusters.json"
+        faces_path = self.project_dir / "data" / "faces" / "face_clusters.json"
         if not faces_path.exists():
             return {}
 

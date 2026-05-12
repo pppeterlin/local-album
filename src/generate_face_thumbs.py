@@ -14,9 +14,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-PROJECT_DIR = Path("/Users/chun/Documents/Python/Local Photo Labeler")
-FACES_FILE = PROJECT_DIR / "face_clusters.json"
-THUMBS_DIR = PROJECT_DIR / "face_thumbs"
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+FACES_DIR = PROJECT_DIR / "data" / "faces"
+FACES_FILE = FACES_DIR / "face_clusters.json"
+THUMBS_DIR = FACES_DIR / "face_thumbs"
 
 
 def resize_for_crop(img, max_long_edge=1280):

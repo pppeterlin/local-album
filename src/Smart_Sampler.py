@@ -3,7 +3,7 @@ Smart_Sampler.py — 語義聚類與代表採樣
 
 讀取 Local_Indexer.py 產出的 embeddings.pkl，對 L2-normalized 向量進行
 DBSCAN（自動類別數）或自適應 K-Means 聚類；從每個群中挑選最接近質心的 N
-張照片。輸出 JSON 清單供 Xiaomi_Labeler.py 使用。
+張照片。輸出 JSON 清單供 Vision_Labeler.py 使用。
 """
 
 from __future__ import annotations

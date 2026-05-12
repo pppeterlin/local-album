@@ -12,34 +12,29 @@ build/
 .venv/
 venv/
 env/
-
-# uv
 .python-version
 
-# IDE
+# IDE / OS
 .claude/
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Project outputs (large files, don't track)
-embeddings*.pkl
-samples*.json
-labels*.json
-*.pkl
-*.json
-!.gitignore
+# Secrets
+.env
+
+# Local-only notes (not for the public repo)
+doc-local/
+
+# Project outputs — everything under data/ is generated, do not track
+data/
 
 # Model weights
 *.pt
 *.pth
 *.onnx
 *.bin
-.env
-face_thumbs/

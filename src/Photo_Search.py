@@ -69,8 +69,8 @@ class PhotoSearcher:
         Args:
             labels_path: labels.json 路徑
             output_path: label_embeddings.pkl 輸出路徑
-            api_key: MiMo API key（翻譯用）
-            base_url: MiMo API base URL
+            api_key: LLM API key（翻譯用）
+            base_url: LLM API base URL
 
         Returns:
             {"paths": [...], "vectors": np.ndarray, "labels": [...]}
@@ -130,18 +130,17 @@ class PhotoSearcher:
         return bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf]', text))
 
     @staticmethod
-    def _translate_to_english(text: str, api_key: str, base_url: str) -> str:
-        """用 MiMo API 將中文翻譯成英文（供 CLIP text encoder 使用）。"""
+    def _translate_to_english(text: str, api_key: str, base_url: str, model: str) -> str:
+        """用 LLM 將中文翻譯成英文（供 CLIP text encoder 使用）。"""
         from openai import OpenAI
         client = OpenAI(api_key=api_key, base_url=base_url)
         resp = client.chat.completions.create(
-            model="mimo-v2.5",
+            model=model,
             messages=[
                 {"role": "system", "content": "You are a translator. Translate the user's text to English. Output ONLY the translation, nothing else."},
                 {"role": "user", "content": text},
             ],
             max_tokens=100,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         translated = resp.choices[0].message.content.strip()
         LOGGER.info("Translated: \"%s\" → \"%s\"", text, translated)
@@ -176,6 +175,7 @@ class PhotoSearcher:
         camera: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
+        translate_model: Optional[str] = None,
         clip_weight: float = 0.6,
     ) -> List[Dict]:
         """
@@ -193,8 +193,9 @@ class PhotoSearcher:
             date_from: 篩選起始日期 (YYYY-MM-DD)
             date_to: 篩選結束日期 (YYYY-MM-DD)
             camera: 篩選相機型號（模糊匹配）
-            api_key: MiMo API key（中文翻譯用）
-            base_url: MiMo API base URL（翻譯用）
+            api_key: LLM API key（中文翻譯用）
+            base_url: LLM API base URL（翻譯用）
+            translate_model: 翻譯用模型名稱
             clip_weight: CLIP 相似度權重（0~1）
 
         Returns:
@@ -265,7 +266,11 @@ class PhotoSearcher:
         search_query = query
         if self._has_cjk(query) and api_key:
             try:
-                search_query = self._translate_to_english(query, api_key, base_url or "https://token-plan-cn.xiaomimimo.com/v1")
+                search_query = self._translate_to_english(
+                    query, api_key,
+                    base_url or "https://api.openai.com/v1",
+                    translate_model or "gpt-4o-mini",
+                )
             except Exception as e:
                 LOGGER.warning("Translation failed: %s — using original query", e)
         elif self._has_cjk(query) and not api_key:
@@ -399,8 +404,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--date-to", default=None, help="篩選結束日期 (YYYY-MM-DD)")
     p.add_argument("--camera", default=None, help="篩選相機型號（模糊匹配）")
     p.add_argument("--clip-weight", type=float, default=0.6, help="CLIP 權重（0~1，預設 0.6）")
-    p.add_argument("--api-key", default=None, help="MiMo API key（中文翻譯用，預設讀 MIMO_API_KEY）")
-    p.add_argument("--base-url", default=None, help="MiMo API base URL（翻譯用）")
+    p.add_argument("--api-key", default=None, help="LLM API key（中文翻譯用，預設讀 VISION_API_KEY）")
+    p.add_argument("--base-url", default=None, help="LLM API base URL（翻譯用）")
+    p.add_argument("--translate-model", default=None, help="翻譯用模型（預設讀 VISION_MODEL）")
     p.add_argument("--json", action="store_true", help="以 JSON 格式輸出")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
@@ -413,12 +419,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     # API key for translation (CLI > env)
-    api_key = args.api_key or os.environ.get("MIMO_API_KEY")
-    base_url = args.base_url or os.environ.get("MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1")
+    api_key = args.api_key or os.environ.get("VISION_API_KEY")
+    base_url = args.base_url or os.environ.get("VISION_BASE_URL")
+    translate_model = args.translate_model or os.environ.get("VISION_MODEL")
 
-    # 自動偵測 labels.json（專案目錄下）
-    project_dir = Path(__file__).parent
-    labels_path = project_dir / "labels.json"
+    # 自動偵測 labels.json（data/labels/ 下）
+    project_dir = Path(__file__).resolve().parent.parent
+    labels_path = project_dir / "data" / "labels" / "labels.json"
     if not labels_path.exists():
         labels_path = None
         LOGGER.info("No labels.json found in project dir — using CLIP-only search")
@@ -435,6 +442,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         camera=args.camera,
         api_key=api_key,
         base_url=base_url,
+        translate_model=translate_model,
         clip_weight=args.clip_weight,
     )
 
