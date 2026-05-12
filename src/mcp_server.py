@@ -45,9 +45,10 @@ mcp = FastMCP("local-album")
 
 
 def _load_index() -> PhotoIndex:
-    """Open the on-disk index. Errors loudly if it doesn't exist."""
+    """Open the on-disk index. PhotoIndex.__init__ loads it lazily; we
+    just verify the file exists and produce a friendly error if not."""
     idx = PhotoIndex(str(PROJECT_ROOT))
-    if not idx.index_path.exists():
+    if not idx.index:
         raise FileNotFoundError(
             f"No index at {idx.index_path}. Build it first with:\n"
             f"  uv run python src/Photo_Index.py build \\\n"
@@ -55,7 +56,6 @@ def _load_index() -> PhotoIndex:
             f"      --faces  data/faces/face_clusters.json \\\n"
             f"      --embeddings data/embeddings/<name>.pkl"
         )
-    idx.load_index()
     return idx
 
 
@@ -145,6 +145,55 @@ def get_photo(path: str) -> dict[str, Any]:
     if not info:
         return {"error": f"Not in index: {path}"}
     return info
+
+
+@mcp.tool()
+def open_in_viewer(paths: list[str], max_open: int = 50) -> dict[str, Any]:
+    """Open one or more image paths in the local OS's default image viewer.
+
+    macOS opens them all in a single Preview window (sidebar shows the set).
+    Linux/Windows open each in the default app (one window per file — most
+    desktop environments don't expose a multi-image viewer via CLI).
+
+    Args:
+        paths:    List of absolute image paths (typically from search_photos).
+        max_open: Hard cap to prevent runaway window spawning. Default 50.
+
+    Returns:
+        {opened: int, skipped_missing: [..], error: str | None}
+    """
+    import platform
+    import shutil
+    import subprocess
+
+    paths = list(paths)[:max_open]
+    existing = [p for p in paths if Path(p).exists()]
+    missing = [p for p in paths if not Path(p).exists()]
+
+    if not existing:
+        return {"opened": 0, "skipped_missing": missing,
+                "error": "no valid paths to open"}
+
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            # `open -a Preview <files>` groups into one Preview window
+            subprocess.run(["open", "-a", "Preview", *existing], check=True)
+        elif system == "Windows":
+            for p in existing:
+                # start uses cmd.exe; the empty "" is the window title
+                subprocess.Popen(["cmd", "/c", "start", "", p], shell=False)
+        else:  # Linux / BSD
+            opener = shutil.which("xdg-open") or shutil.which("gio")
+            if not opener:
+                return {"opened": 0, "skipped_missing": missing,
+                        "error": "no xdg-open or gio found"}
+            for p in existing:
+                subprocess.Popen([opener, p])
+    except Exception as e:  # noqa: BLE001
+        return {"opened": 0, "skipped_missing": missing, "error": str(e)}
+
+    return {"opened": len(existing), "skipped_missing": missing, "error": None}
 
 
 @mcp.tool()
