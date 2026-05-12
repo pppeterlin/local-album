@@ -233,6 +233,7 @@ claude mcp add local-album \
 | `search_photos(query, face, year, month, location, top_k)` | Combined filter search over labels, faces, EXIF date, GPS |
 | `list_faces(named_only, unnamed_only, top_n)` | Browse face clusters, largest first |
 | `get_photo(path)` | Full record (label, faces, time, location) for one image |
+| `open_in_viewer(paths, max_open)` | Open results in the OS image viewer — Preview (macOS) / `xdg-open` (Linux) / default app (Windows) |
 | `index_stats()` | Counts: total images, images with EXIF/GPS/faces, named clusters |
 
 Indexing, labeling, and clustering remain CLI-only by design — those
