@@ -387,6 +387,10 @@ class Handler(SimpleHTTPRequestHandler):
                 moves_out[f_final][p] = t_final
                 moves_in[t_final].append(p)
 
+        def _thumb_ver(fid: str) -> int:
+            f = THUMBS_DIR / f"{fid}.jpg"
+            return int(f.stat().st_mtime) if f.exists() else 0
+
         result = []
         for fid, info in clusters.items():
             # source cluster 被折疊到 target，不獨立顯示
@@ -435,6 +439,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "moved_in_count": len([p for p in moved_in if p not in rem_set]),
                 "moved_away_count": len(moved_away),
                 "user_created": False,
+                "thumb_v": _thumb_ver(fid),
             })
 
         # User-created clusters (透過 batch move 產生的新 group)：
@@ -466,6 +471,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "moved_in_count": len(active),
                 "moved_away_count": 0,
                 "user_created": True,
+                "thumb_v": _thumb_ver(fid),
             })
 
         # filter
@@ -774,7 +780,7 @@ function renderListRow(c){
   const fid = c.id;
   return `
     <div class="list-row" id="row_${fid}">
-      <img class="lr-thumb" src="/thumb/${fid}.jpg" onerror="this.style.visibility='hidden'">
+      <img class="lr-thumb" src="/thumb/${fid}.jpg?v=${c.thumb_v||0}" onerror="this.style.visibility='hidden'">
       <div class="lr-id">${fid}</div>
       <div class="lr-name" id="name_${fid}" onclick="editNameInline('${fid}')">${c.name}</div>
       <div class="lr-count">${c.count} 張</div>
@@ -879,7 +885,7 @@ function renderCard(c){
           <div class="count">${c.count} 張${c.count!==c.original_count?' (原 '+c.original_count+')':''}</div>
           ${mergedBadge}
         </div>
-        <img class="face-thumb" src="/thumb/${fid}.jpg" onerror="this.style.display='none'">
+        <img class="face-thumb" src="/thumb/${fid}.jpg?v=${c.thumb_v||0}" onerror="this.style.display='none'">
       </div>
       <div class="photo-grid">${previewImgs}</div>
       <div class="expand-bar" onclick="openExpand('${fid}')">
