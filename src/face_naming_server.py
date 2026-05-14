@@ -807,6 +807,8 @@ let yearFilter = '';            // '' = 全部
 let monthFilter = '';           // '' = 全部
 let collapsedYears = new Set(); // 已摺疊（key = String(year) 或 '無日期'）
 let materializedYears = new Set(); // 已 render 出 img DOM 的年份
+let removedSectionCollapsed = true;   // 「已移除」區段預設折疊
+let removedSectionMaterialized = false;
 let unloadTimers = new Map();   // year -> setTimeout id（用於折疊後 TTL 釋放 DOM）
 const UNLOAD_TTL_MS = 3 * 60 * 1000;  // 折疊超過 3 分鐘 → 移除 img DOM
 
@@ -1006,6 +1008,8 @@ function openExpand(fid){
   monthFilter = '';
   collapsedYears.clear();
   materializedYears.clear();
+  removedSectionCollapsed = true;
+  removedSectionMaterialized = false;
   for(const t of unloadTimers.values()) clearTimeout(t);
   unloadTimers.clear();
   if(selectMode && selectMode !== fid){
@@ -1040,6 +1044,8 @@ function closeExpand(){
   openExpandMeta = null;
   collapsedYears.clear();
   materializedYears.clear();
+  removedSectionCollapsed = true;
+  removedSectionMaterialized = false;
   for(const t of unloadTimers.values()) clearTimeout(t);
   unloadTimers.clear();
   if(selectMode){
@@ -1150,18 +1156,47 @@ function renderExpandBody(){
   }).join('');
 
   const removed = openExpandMeta.removed || [];
-  const removedImgs = removed.map(x =>
-    `<div class="thumb-wrap">
-      <img src="/img_thumb/${x.path}?w=200" loading="lazy" decoding="async">
-      <button class="restore-btn" onclick="restoreImg('${fid}','${x.path.replace(/'/g,"\\'")}')" title="恢復">↩</button>
-    </div>`
-  ).join('');
-  const removedSection = removed.length > 0
-    ? `<div style="padding:14px 0 6px;color:#666;font-size:12px">已移除 (${removed.length})：</div>
-       <div class="removed-grid">${removedImgs}</div>`
-    : '';
+  let removedSection = '';
+  if(removed.length > 0){
+    const collapsed = removedSectionCollapsed;
+    let mat = removedSectionMaterialized;
+    if(!collapsed && !mat){ removedSectionMaterialized = true; mat = true; }
+    const removedImgs = removed.map(x =>
+      `<div class="thumb-wrap">
+        <img src="/img_thumb/${x.path}?w=200" loading="lazy" decoding="async">
+        <button class="restore-btn" onclick="restoreImg('${fid}','${x.path.replace(/'/g,"\\'")}')" title="恢復">↩</button>
+      </div>`
+    ).join('');
+    const body = mat
+      ? `<div class="removed-grid">${removedImgs}</div>`
+      : `<div style="color:#666;font-size:12px;padding:6px 4px">點選展開以載入</div>`;
+    removedSection = `<div class="year-section ${collapsed?'collapsed':''}" data-removed="1" style="margin-top:14px">
+      <div class="year-header" style="background:#3a2424;color:#ef9a9a" onclick="toggleRemovedSection()">
+        <span>已移除 <span style="color:#888;font-weight:400;font-size:12px">(${removed.length} 張)</span></span>
+        <span class="toggle">▼</span>
+      </div>
+      <div class="year-body">${body}</div>
+    </div>`;
+  }
 
   document.getElementById('expandBody').innerHTML = `${tools}${sections}${removedSection}`;
+}
+
+function toggleRemovedSection(){
+  if(removedSectionCollapsed){
+    removedSectionCollapsed = false;
+    removedSectionMaterialized = true;
+  } else {
+    removedSectionCollapsed = true;
+    // TTL：3 min 後若仍 collapsed → 釋放 DOM
+    setTimeout(()=>{
+      if(!openExpandFid) return;
+      if(!removedSectionCollapsed) return;
+      removedSectionMaterialized = false;
+      renderExpandBody();
+    }, UNLOAD_TTL_MS);
+  }
+  renderExpandBody();
 }
 
 function toggleYear(y){
