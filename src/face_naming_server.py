@@ -701,7 +701,8 @@ h1{text-align:center;margin-bottom:6px}
 .year-filter select{padding:6px 10px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;font-size:13px}
 .year-filter .clear{padding:4px 10px;background:#333;color:#888;border:none;border-radius:4px;cursor:pointer;font-size:12px}
 .year-section{margin-bottom:14px}
-.year-header{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#1f2a30;color:#4fc3f7;font-weight:600;border-radius:6px;cursor:pointer;margin-bottom:6px;font-size:14px}
+.year-header{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#1f2a30;color:#4fc3f7;font-weight:600;border-radius:6px;cursor:pointer;margin-bottom:6px;font-size:14px;
+  position:sticky;top:0;z-index:5;box-shadow:0 2px 6px rgba(0,0,0,.4)}
 .year-header:hover{background:#253339}
 .year-header .toggle{transition:transform .15s}
 .year-section.collapsed .year-header .toggle{transform:rotate(-90deg)}
