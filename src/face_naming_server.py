@@ -140,6 +140,10 @@ class Handler(SimpleHTTPRequestHandler):
         elif path == "/api/stats":
             self.json_response(self.get_stats())
 
+        elif path == "/api/cluster_meta":
+            fid = qs.get("fid", [""])[0]
+            self.json_response(self.get_cluster_meta(fid))
+
         else:
             self.send_error(404)
 
@@ -338,6 +342,52 @@ class Handler(SimpleHTTPRequestHandler):
                 self.wfile.write(f.read())
         else:
             self.send_error(404, str(path))
+
+    # ---- cluster metadata (mtime per photo, cached) ----
+
+    _MTIME_CACHE: dict = {}
+
+    def get_cluster_meta(self, fid: str) -> dict:
+        """為單一 cluster 的圖片回傳 mtime / 年 / 月，並按時間 desc 排序。"""
+        if not fid:
+            return {"id": fid, "images": [], "removed": []}
+        all_data = self.get_all_sorted("all")
+        target = next((c for c in all_data if c["id"] == fid), None)
+        if not target:
+            return {"id": fid, "images": [], "removed": []}
+
+        from concurrent.futures import ThreadPoolExecutor
+        from datetime import datetime
+        import os as _os
+
+        cache = type(self)._MTIME_CACHE
+
+        def fetch(p: str):
+            if p in cache:
+                return cache[p]
+            try:
+                ts = _os.stat(p).st_mtime
+            except (OSError, ValueError):
+                ts = 0.0
+            cache[p] = ts
+            return ts
+
+        all_paths = list(target["images"]) + list(target.get("removed", []))
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(fetch, all_paths))
+
+        def enrich(p: str) -> dict:
+            ts = cache.get(p, 0.0)
+            if ts > 0:
+                dt = datetime.fromtimestamp(ts)
+                return {"path": p, "ts": ts, "year": dt.year, "month": dt.month}
+            return {"path": p, "ts": 0, "year": None, "month": None}
+
+        active = sorted([enrich(p) for p in target["images"]],
+                        key=lambda x: x["ts"], reverse=True)
+        removed = sorted([enrich(p) for p in target.get("removed", [])],
+                         key=lambda x: x["ts"], reverse=True)
+        return {"id": fid, "images": active, "removed": removed}
 
     # ---- thumb crop helper ----
 
@@ -647,6 +697,15 @@ h1{text-align:center;margin-bottom:6px}
 .expand-modal .expand-photos{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
 .expand-modal .expand-photos .thumb-wrap img{border-radius:6px}
 .expand-modal .removed-grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px}
+.year-filter{display:flex;gap:8px;align-items:center;padding:8px 0 12px;flex-wrap:wrap}
+.year-filter select{padding:6px 10px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;font-size:13px}
+.year-filter .clear{padding:4px 10px;background:#333;color:#888;border:none;border-radius:4px;cursor:pointer;font-size:12px}
+.year-section{margin-bottom:14px}
+.year-header{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#1f2a30;color:#4fc3f7;font-weight:600;border-radius:6px;cursor:pointer;margin-bottom:6px;font-size:14px}
+.year-header:hover{background:#253339}
+.year-header .toggle{transition:transform .15s}
+.year-section.collapsed .year-header .toggle{transform:rotate(-90deg)}
+.year-section.collapsed .year-body{display:none}
 .modal-box h3{margin-bottom:16px}
 .modal-box input[type=text]{width:100%;padding:8px 10px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;margin-bottom:8px}
 .modal-box select{width:100%;padding:10px;margin-bottom:16px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;max-height:300px}
@@ -741,8 +800,12 @@ let moveSource = '';   // 來源 cluster id
 let movePath = '';     // 單張移動的圖片路徑（null 代表 batch）
 let allClusters = [];  // 給合併/移動下拉用，按需 fetch
 let openExpandFid = null;       // 目前 modal 展開的 cluster id（單一）
+let openExpandMeta = null;      // {images:[{path,ts,year,month}], removed:[]}
 let selectMode = null;          // 多選模式作用中的 cluster id
 let selectedPaths = new Set();  // 已選中的照片路徑
+let yearFilter = '';            // '' = 全部
+let monthFilter = '';           // '' = 全部
+let collapsedYears = new Set(); // 摺疊起來的年份
 
 loadStats();
 loadPage(0);
@@ -935,14 +998,23 @@ function renderCard(c){
 
 function openExpand(fid){
   openExpandFid = fid;
-  // 多選狀態跟著 expand 走（若不同 cluster，重置）
+  openExpandMeta = null;
+  yearFilter = '';
+  monthFilter = '';
+  collapsedYears.clear();
   if(selectMode && selectMode !== fid){
     selectMode = null;
     selectedPaths.clear();
     renderSelectBar();
   }
-  renderExpandBody();
+  document.getElementById('expandBody').innerHTML = '<div style="padding:30px;color:#888;text-align:center">載入中…</div>';
   document.getElementById('expandModal').classList.add('active');
+  // Lazy fetch dates
+  fetch(`/api/cluster_meta?fid=${encodeURIComponent(fid)}`).then(r=>r.json()).then(meta=>{
+    if(openExpandFid !== fid) return;  // user 已切換了
+    openExpandMeta = meta;
+    renderExpandBody();
+  });
 }
 
 function closeExpand(){
@@ -956,7 +1028,7 @@ function closeExpand(){
 }
 
 function renderExpandBody(){
-  if(!openExpandFid) return;
+  if(!openExpandFid || !openExpandMeta) return;
   const c = ITEMS.find(x=>x.id===openExpandFid);
   if(!c){ closeExpand(); return; }
   const fid = c.id;
@@ -966,7 +1038,59 @@ function renderExpandBody(){
   document.getElementById('expandMeta').textContent =
     `${c.count} 張${c.count!==c.original_count?' (原 '+c.original_count+')':''}`;
 
-  const allImgs = c.images.map(img=>{
+  // 套 filter
+  const allItems = openExpandMeta.images || [];
+  const filtered = allItems.filter(x => {
+    if(yearFilter !== '' && String(x.year||'') !== String(yearFilter)) return false;
+    if(monthFilter !== '' && String(x.month||'') !== String(monthFilter)) return false;
+    return true;
+  });
+
+  // 取得可選年份（從未過濾的清單）
+  const yearSet = new Set();
+  for(const x of allItems) if(x.year) yearSet.add(x.year);
+  const years = [...yearSet].sort((a,b)=>b-a);
+  const yearOptions = years.map(y => `<option value="${y}" ${String(y)===String(yearFilter)?'selected':''}>${y}</option>`).join('');
+  const monthOptions = Array.from({length:12},(_,i)=>i+1).map(m =>
+    `<option value="${m}" ${String(m)===String(monthFilter)?'selected':''}>${m} 月</option>`).join('');
+
+  const tools = `
+    <div class="expand-tools">
+      <button class="${inSelect?'active':''}" onclick="toggleSelectMode('${fid}')">
+        ${inSelect ? '✓ 多選中' : '🔲 多選'}
+      </button>
+      ${inSelect ? '<span class="hint">點縮圖切換選取；底部 bar 移動</span>' : ''}
+    </div>
+    <div class="year-filter">
+      <span style="color:#888">篩選：</span>
+      <select onchange="yearFilter=this.value; renderExpandBody();">
+        <option value="">全部年份</option>
+        ${yearOptions}
+        ${allItems.some(x=>!x.year) ? `<option value="null" ${yearFilter==='null'?'selected':''}>無日期</option>` : ''}
+      </select>
+      <select onchange="monthFilter=this.value; renderExpandBody();">
+        <option value="">全部月份</option>
+        ${monthOptions}
+      </select>
+      ${(yearFilter||monthFilter) ? '<button class="clear" onclick="yearFilter=\\'\\';monthFilter=\\'\\';renderExpandBody();">清除</button>' : ''}
+      <span style="color:#888;margin-left:auto">顯示 ${filtered.length} / ${allItems.length}</span>
+    </div>`;
+
+  // 按年分組（同年內已按 ts desc）
+  const byYear = new Map();
+  for(const x of filtered){
+    const key = x.year || '無日期';
+    if(!byYear.has(key)) byYear.set(key, []);
+    byYear.get(key).push(x);
+  }
+  // year keys：數字降序、最後放「無日期」
+  const yearKeys = [...byYear.keys()].sort((a,b)=>{
+    if(a==='無日期') return 1; if(b==='無日期') return -1;
+    return b-a;
+  });
+
+  function renderThumb(x){
+    const img = x.path;
     const safeImg = img.replace(/'/g,"\\'");
     const isSel = inSelect && selectedPaths.has(img);
     const wrapCls = 'thumb-wrap' + (inSelect?' selectable':'') + (isSel?' selected':'');
@@ -983,30 +1107,49 @@ function renderExpandBody(){
       <img src="/img_thumb/${img}?w=300" loading="lazy" decoding="async" ${imgClick}>
       ${actions}
     </div>`;
+  }
+
+  const sections = yearKeys.map(y => {
+    const items = byYear.get(y);
+    const collapsed = collapsedYears.has(y);
+    return `<div class="year-section ${collapsed?'collapsed':''}">
+      <div class="year-header" onclick="toggleYear('${y}')">
+        <span>${y} <span style="color:#888;font-weight:400;font-size:12px">(${items.length} 張)</span></span>
+        <span class="toggle">▼</span>
+      </div>
+      <div class="year-body">
+        <div class="expand-photos">${items.map(renderThumb).join('')}</div>
+      </div>
+    </div>`;
   }).join('');
 
-  const removedImgs = (c.removed||[]).map(img=>
+  const removed = openExpandMeta.removed || [];
+  const removedImgs = removed.map(x =>
     `<div class="thumb-wrap">
-      <img src="/img_thumb/${img}?w=200" loading="lazy" decoding="async">
-      <button class="restore-btn" onclick="restoreImg('${fid}','${img.replace(/'/g,"\\'")}')" title="恢復">↩</button>
+      <img src="/img_thumb/${x.path}?w=200" loading="lazy" decoding="async">
+      <button class="restore-btn" onclick="restoreImg('${fid}','${x.path.replace(/'/g,"\\'")}')" title="恢復">↩</button>
     </div>`
   ).join('');
-
-  const tools = `
-    <div class="expand-tools">
-      <button class="${inSelect?'active':''}" onclick="toggleSelectMode('${fid}')">
-        ${inSelect ? '✓ 多選中' : '🔲 多選'}
-      </button>
-      ${inSelect ? '<span class="hint">點縮圖切換選取；底部 bar 移動</span>' : ''}
-    </div>`;
-
-  const removedSection = (c.removed||[]).length > 0
-    ? `<div style="padding:14px 0 6px;color:#666;font-size:12px">已移除 (${c.removed.length})：</div>
+  const removedSection = removed.length > 0
+    ? `<div style="padding:14px 0 6px;color:#666;font-size:12px">已移除 (${removed.length})：</div>
        <div class="removed-grid">${removedImgs}</div>`
     : '';
 
-  document.getElementById('expandBody').innerHTML =
-    `${tools}<div class="expand-photos">${allImgs}</div>${removedSection}`;
+  document.getElementById('expandBody').innerHTML = `${tools}${sections}${removedSection}`;
+}
+
+function toggleYear(y){
+  if(collapsedYears.has(y)) collapsedYears.delete(y);
+  else collapsedYears.add(y);
+  renderExpandBody();
+}
+
+function refreshExpandMeta(){
+  if(!openExpandFid) return Promise.resolve();
+  return fetch(`/api/cluster_meta?fid=${encodeURIComponent(openExpandFid)}`)
+    .then(r=>r.json()).then(meta=>{
+      if(openExpandFid){ openExpandMeta = meta; renderExpandBody(); }
+    });
 }
 
 function toggleSelectMode(fid){
@@ -1194,7 +1337,7 @@ function doMove(tgt, newName){
       renderSelectBar();
     }
     loadStats();
-    loadPage(currentPage);
+    loadPage(currentPage).then(()=>{ if(openExpandFid) refreshExpandMeta(); });
     if(tgt === '__new__' && d && d.to_id){
       const nm = (document.getElementById('newGroupName')||{}).value || '';
       setTimeout(()=>{
@@ -1232,9 +1375,9 @@ function removeImg(fid,img){
       c.images=c.images.filter(i=>i!==img);
       c.removed=[...(c.removed||[]),img];
       c.count=c.images.length;
-      if(openExpandFid===fid) renderExpandBody();
       renderGrid();
     }
+    if(openExpandFid===fid) refreshExpandMeta();
   });
 }
 
@@ -1245,9 +1388,9 @@ function restoreImg(fid,img){
       c.images.push(img);
       c.removed=(c.removed||[]).filter(i=>i!==img);
       c.count=c.images.length;
-      if(openExpandFid===fid) renderExpandBody();
       renderGrid();
     }
+    if(openExpandFid===fid) refreshExpandMeta();
   });
 }
 
