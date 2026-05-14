@@ -195,8 +195,13 @@ class Handler(SimpleHTTPRequestHandler):
             from_id = body.get("from_id")
             to_id = body.get("to_id")
             img_path = body.get("image_path")
+            new_name = (body.get("new_name") or "").strip()
             if to_id == "__new__":
                 to_id = _next_user_face_id(load_faces(), moves)
+                if new_name:
+                    names = load_names()
+                    names[to_id] = new_name
+                    save_names(names)
             if from_id and to_id and img_path and from_id != to_id:
                 moves = [m for m in moves if m.get("path") != img_path]
                 moves.append({"path": img_path, "from": from_id, "to": to_id})
@@ -216,9 +221,14 @@ class Handler(SimpleHTTPRequestHandler):
             from_id = body.get("from_id")
             to_id = body.get("to_id")
             paths = body.get("paths", [])
-            # 特殊 sentinel：建立新群組
+            new_name = (body.get("new_name") or "").strip()
+            # 特殊 sentinel：建立新群組，optional new_name 直接寫進 face_names.json
             if to_id == "__new__":
                 to_id = _next_user_face_id(load_faces(), moves)
+                if new_name:
+                    names = load_names()
+                    names[to_id] = new_name
+                    save_names(names)
             if from_id and to_id and paths and from_id != to_id:
                 ps = set(paths)
                 moves = [m for m in moves if m.get("path") not in ps]
@@ -683,12 +693,15 @@ h1{text-align:center;margin-bottom:6px}
     <div id="movePreview" style="text-align:center;margin-bottom:12px"></div>
     <input type="text" id="moveFilter" placeholder="輸入名稱或 ID 過濾..." oninput="filterMoveOptions()">
     <select id="moveTarget" size="10"></select>
-    <div class="modal-actions" style="justify-content:space-between">
+    <div style="display:flex;gap:6px;align-items:center;margin-top:10px;padding:10px;background:#222;border-radius:6px">
+      <input type="text" id="newGroupName" placeholder="新群組名稱（可選）"
+             style="flex:1;padding:7px 10px;background:#1a1a1a;color:#fff;border:1px solid #333;border-radius:4px;font-size:13px"
+             onkeydown="if(event.key==='Enter')moveToNew()">
       <button class="btn btn-merge" onclick="moveToNew()" title="建立新群組並把選的照片放進去">✨ 移到新群組</button>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-skip" onclick="closeMove()">取消</button>
-        <button class="btn btn-save" onclick="confirmMove()">移動</button>
-      </div>
+    </div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn btn-skip" onclick="closeMove()">取消</button>
+      <button class="btn btn-save" onclick="confirmMove()">移到既有群組</button>
     </div>
   </div>
 </div>
@@ -1017,6 +1030,7 @@ function moveSelected(){
   moveSource = selectMode;
   movePath = null;  // null = batch
   document.getElementById('moveFilter').value = '';
+  const ngn = document.getElementById('newGroupName'); if(ngn) ngn.value = '';
   document.getElementById('movePreview').innerHTML =
     `<div style="color:#4fc3f7;font-size:15px">批次移動 ${selectedPaths.size} 張</div>
      <div style="color:#888;font-size:12px;margin-top:4px">來自 ${moveSource}</div>`;
@@ -1105,6 +1119,7 @@ function openMove(fid, imgPath){
   moveSource = fid;
   movePath = imgPath;
   document.getElementById('moveFilter').value = '';
+  const ngn = document.getElementById('newGroupName'); if(ngn) ngn.value = '';
   document.getElementById('movePreview').innerHTML =
     `<img src="/img_thumb/${imgPath}?w=300" style="max-height:140px;border-radius:6px;border:2px solid #333">
      <div style="color:#888;font-size:12px;margin-top:6px">來自 ${fid}</div>`;
@@ -1138,15 +1153,16 @@ function confirmMove(){
 }
 
 function moveToNew(){
-  // 建立新群組並把選的（或單張）放進去
-  doMove('__new__');
+  const nm = (document.getElementById('newGroupName').value || '').trim();
+  doMove('__new__', nm);
 }
 
-function doMove(tgt){
+function doMove(tgt, newName){
   const isBatch = movePath === null;
-  const req = isBatch
-    ? post('/api/move-batch',{from_id:moveSource, to_id:tgt, paths:[...selectedPaths]})
-    : post('/api/move',{from_id:moveSource, to_id:tgt, image_path:movePath});
+  const batchBody = {from_id:moveSource, to_id:tgt, paths:[...selectedPaths]};
+  const singleBody = {from_id:moveSource, to_id:tgt, image_path:movePath};
+  if(newName){ batchBody.new_name = newName; singleBody.new_name = newName; }
+  const req = isBatch ? post('/api/move-batch', batchBody) : post('/api/move', singleBody);
   req.then(r=>r.json()).then(d=>{
     closeMove();
     if(isBatch){
@@ -1157,9 +1173,11 @@ function doMove(tgt){
     loadStats();
     loadPage(currentPage);
     if(tgt === '__new__' && d && d.to_id){
-      // 提示新建的 cluster id
+      const nm = (document.getElementById('newGroupName')||{}).value || '';
       setTimeout(()=>{
-        alert(`已建立新群組 ${d.to_id}，請至「未命名」頁籤或滾動找到該卡片命名。`);
+        alert(nm.trim()
+          ? `已建立新群組「${nm.trim()}」 (${d.to_id})`
+          : `已建立新群組 ${d.to_id}，請後續手動命名。`);
       }, 100);
     }
   });
