@@ -11,6 +11,7 @@ face_naming_server.py — 人臉命名伺服器 v4
 """
 
 import json
+import os
 import sys
 from collections import defaultdict
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -19,6 +20,7 @@ from urllib.parse import unquote, urlparse, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _paths import PROJECT_ROOT as PROJECT_DIR, FACES_DIR  # noqa: E402
+import _auth  # noqa: E402
 
 FACES_FILE = FACES_DIR / "face_clusters.json"
 NAMES_FILE = FACES_DIR / "face_names.json"
@@ -98,30 +100,108 @@ def _resolve_target(merges, fid):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    # --- auth helpers --------------------------------------------------
+    def _user(self):
+        if not hasattr(self, "_cached_user"):
+            self._cached_user = _auth.extract_user_from_headers(self.headers)
+        return self._cached_user
+
+    def _perms(self):
+        if not hasattr(self, "_cached_perms"):
+            self._cached_perms = _auth.get_user_perms(self._user())
+        return self._cached_perms
+
+    def _require_login(self):
+        """Return False (and serve login) if no valid session. True → continue."""
+        if self._user():
+            return True
+        # /login HTML + /api/login POST allowed unauthenticated
+        return False
+
+    def _require_admin(self):
+        p = self._perms()
+        if not p["is_admin"]:
+            self.send_error(403, "admin only")
+            return False
+        return True
+
+    def _can_see_cluster(self, fid: str) -> bool:
+        p = self._perms()
+        if p["is_admin"]:
+            return True
+        return fid in p["allowed_faces"]
+
+    def _can_see_image(self, img_path: str) -> bool:
+        p = self._perms()
+        if p["is_admin"]:
+            return True
+        merges = load_merges()
+        faces = load_faces().get("images", {}).get(img_path, [])
+        face_ids = [_resolve_target(merges, f.get("face_id", "")) for f in faces]
+        # 套用 moves：被搬走的 face record 應該追新 target
+        moves = load_moves()
+        moves_map = {}
+        for m in moves:
+            if m.get("path") != img_path:
+                continue
+            f_final = _resolve_target(merges, m.get("from", ""))
+            t_final = _resolve_target(merges, m.get("to", ""))
+            moves_map[f_final] = t_final
+        effective = [moves_map.get(fid, fid) for fid in face_ids]
+        return _auth.can_see_photo(p, img_path, effective)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+
+        # public routes
+        if path in ("/login", "/login/"):
+            self.html(self.generate_login_html())
+            return
+        if path == "/api/me":
+            user = self._user()
+            perms = self._perms()
+            self.json_response({"user": user, "is_admin": perms["is_admin"], "is_viewer": perms["is_viewer"]})
+            return
+
+        # everything else requires login
+        if not self._require_login():
+            if path.startswith("/api/"):
+                self.send_error(401, "login required")
+            else:
+                self.send_response(302)
+                self.send_header("Location", "/login")
+                self.end_headers()
+            return
 
         if path in ("/", "/index.html"):
             self.html(self.generate_html())
 
         elif path.startswith("/image/"):
             img = self.fix_path(path[7:])
+            if not self._can_see_image(img):
+                self.send_error(403); return
             self.serve_file(img, "image/jpeg")
 
         elif path.startswith("/thumb/"):
-            thumb = THUMBS_DIR / unquote(path[7:])
+            # face cluster thumbnail; only allowed for clusters the user can see
+            fid_filename = unquote(path[7:])
+            fid = fid_filename.rsplit(".", 1)[0]
+            if not self._can_see_cluster(fid):
+                self.send_error(403); return
+            thumb = THUMBS_DIR / fid_filename
             self.serve_file(thumb, "image/jpeg")
 
         elif path.startswith("/img_thumb/"):
-            # 即時縮圖 + 磁碟 cache，避免瀏覽器載原圖吃爆記憶體
             try:
                 w = int(qs.get("w", ["256"])[0])
             except ValueError:
                 w = 256
             w = max(64, min(w, 1024))
             orig = self.fix_path(path[11:])
+            if not self._can_see_image(orig):
+                self.send_error(403); return
             self.serve_img_thumb(orig, w)
 
         elif path == "/api/page":
@@ -151,6 +231,38 @@ class Handler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         body = self.read_body()
+
+        # login / logout — open routes
+        if path == "/api/login":
+            username = (body.get("username") or "").strip()
+            password = body.get("password") or ""
+            users = _auth.load_users()
+            u = users.get(username)
+            if not u or not _auth.verify_password(password, u.get("password_hash", "")):
+                self.send_response(401)
+                self.send_header("Content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": "invalid credentials"}).encode())
+                return
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.send_header("Set-Cookie", _auth.cookie_header(username))
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "user": username, "is_admin": u.get("role") == "admin"}).encode())
+            return
+        if path == "/api/logout":
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.send_header("Set-Cookie", _auth.cookie_header(None))
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            return
+
+        # everything else is admin-only (mutations)
+        if not self._user():
+            self.send_error(401, "login required"); return
+        if not self._require_admin():
+            return
 
         if path == "/api/name":
             names = load_names()
@@ -566,6 +678,17 @@ class Handler(SimpleHTTPRequestHandler):
             result = [r for r in result if r["skipped"]]
         # "all" → 全留
 
+        # 權限：非 admin 只看 allowed_faces 對應 cluster，且 images 也要過濾
+        perms = self._perms()
+        if not perms["is_admin"]:
+            result = [r for r in result if r["id"] in perms["allowed_faces"]]
+            # 每個 cluster 內：路徑被擋且該照片未被 allowed_faces 解鎖 → 移除
+            # （因為這個 cluster 本身就在 allowed_faces，所以裡面所有照片都會被解鎖。
+            #  blocked_paths 只在「user 不該看到那張」的情境下適用，這裡其實不會擋。
+            #  保留 hook 給未來：照片裡可能有其他 allowed_faces 之外的人臉混入。
+            #  目前 cluster 已通過 allowed_faces 篩選，無需逐張過濾。）
+            pass
+
         # 排序：未略過在前（依 count desc）、略過在後（依 count desc）
         result.sort(key=lambda r: (r["skipped"], -r["count"]))
         return result
@@ -591,29 +714,106 @@ class Handler(SimpleHTTPRequestHandler):
         merges = load_merges()
         faces = load_faces()
         total = len(faces.get("clusters", {}))
+        perms = self._perms()
+        if perms["is_admin"]:
+            return {
+                "total": total,
+                "displayed": total - len(merges),
+                "named": len(names),
+                "skipped": len(skipped),
+                "merges": len(merges),
+            }
+        allowed = perms["allowed_faces"]
         return {
-            "total": total,
-            "displayed": total - len(merges),  # 不算被折疊的 source
-            "named": len(names),
-            "skipped": len(skipped),
-            "merges": len(merges),
+            "total": len(allowed),
+            "displayed": len(allowed),
+            "named": sum(1 for fid in allowed if names.get(fid)),
+            "skipped": 0,
+            "merges": 0,
         }
 
+    def generate_login_html(self):
+        return """<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>登入 · 人臉命名工具</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#111;color:#e0e0e0;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#1a1a1a;padding:30px;border-radius:12px;border:1px solid #333;max-width:360px;width:100%}
+h1{font-size:20px;margin-bottom:18px;color:#4fc3f7;text-align:center}
+input{width:100%;padding:11px 12px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;font-size:15px;margin-bottom:12px}
+input:focus{border-color:#4fc3f7;outline:none}
+button{width:100%;padding:12px;background:#4fc3f7;color:#000;border:none;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer}
+button:hover{background:#3fb3e7}
+.err{color:#ef5350;font-size:13px;margin-top:8px;text-align:center;min-height:20px}
+</style>
+</head><body>
+<form class="card" onsubmit="event.preventDefault();login()">
+  <h1>👥 人臉命名工具</h1>
+  <input id="u" type="text" placeholder="使用者名稱" autofocus autocomplete="username">
+  <input id="p" type="password" placeholder="密碼" autocomplete="current-password">
+  <button type="submit">登入</button>
+  <div class="err" id="err"></div>
+</form>
+<script>
+function login(){
+  fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username:document.getElementById('u').value,password:document.getElementById('p').value})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok) location.href='/';
+      else document.getElementById('err').textContent=d.error||'登入失敗';
+    });
+}
+</script>
+</body></html>"""
+
     def generate_html(self):
+        user = self._user() or ""
+        perms = self._perms()
+        is_admin = "true" if perms["is_admin"] else "false"
+        inject = f"<script>window.CURRENT_USER='{user}';window.IS_ADMIN={is_admin};</script>"
+        return self._generate_html_template().replace(
+            "<!--USER_INJECT-->", inject)
+
+    def _generate_html_template(self):
         return """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>人臉命名工具</title>
+<!--USER_INJECT-->
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#111;color:#e0e0e0;padding:20px}
 h1{text-align:center;margin-bottom:6px}
 .subtitle{text-align:center;color:#888;margin-bottom:14px;font-size:14px}
+.userbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;color:#888;font-size:13px;flex-wrap:wrap;gap:8px}
+.userbar .who{color:#4fc3f7}
+.userbar button{padding:6px 12px;background:#222;color:#888;border:1px solid #333;border-radius:6px;font-size:12px;cursor:pointer}
+.userbar button:hover{background:#2a2a2a;color:#ccc}
 .toolbar{display:flex;justify-content:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
-.toolbar button{padding:7px 14px;background:#222;color:#888;border:1px solid #333;border-radius:6px;cursor:pointer;font-size:13px}
+.toolbar button{padding:7px 14px;background:#222;color:#888;border:1px solid #333;border-radius:6px;cursor:pointer;font-size:13px;min-height:36px}
 .toolbar button:hover{background:#2a2a2a}
 .toolbar button.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
+.admin-only{display:none}
+body.admin .admin-only{display:initial}
+body.admin .admin-only.flex{display:flex}
+body.admin .admin-only.actions{display:flex}
+@media (max-width:600px){
+  body{padding:10px}
+  .grid{grid-template-columns:1fr !important}
+  .pager{flex-wrap:wrap}
+  .expand-modal .expand-box{max-height:calc(100vh - 20px) !important;width:100vw !important}
+  .expand-header{padding:10px 14px}
+  .expand-header h3{font-size:15px}
+  .modal-box{padding:18px}
+  .face-thumb{width:80px !important;height:80px !important}
+  .card-top{grid-template-columns:1fr 80px !important}
+}
 .stats{text-align:center;margin-bottom:16px;color:#888;font-size:13px}
 .pager{display:flex;justify-content:center;align-items:center;gap:10px;margin:18px 0}
 .pager button{padding:8px 16px;background:#222;color:#ccc;border:1px solid #333;border-radius:6px;cursor:pointer}
@@ -720,14 +920,19 @@ h1{text-align:center;margin-bottom:6px}
 </head>
 <body>
 
+<div class="userbar">
+  <div>👤 <span class="who" id="whoami"></span> <span id="role-tag" style="color:#888;font-size:11px"></span></div>
+  <button onclick="logout()">登出</button>
+</div>
+
 <h1>👥 人臉命名工具</h1>
 <div class="subtitle" id="subtitle"></div>
 
 <div class="toolbar">
   <button class="active" data-filter="all" onclick="setFilter('all')">全部</button>
-  <button data-filter="unnamed" onclick="setFilter('unnamed')">未命名</button>
+  <button class="admin-only" data-filter="unnamed" onclick="setFilter('unnamed')">未命名</button>
   <button data-filter="named" onclick="setFilter('named')">已命名</button>
-  <button data-filter="skipped" onclick="setFilter('skipped')">已略過</button>
+  <button class="admin-only" data-filter="skipped" onclick="setFilter('skipped')">已略過</button>
   <button id="viewToggle" onclick="toggleView()" style="display:none;margin-left:14px">📋 清單模式</button>
 </div>
 
@@ -758,7 +963,7 @@ h1{text-align:center;margin-bottom:6px}
         <span class="meta" id="expandMeta"></span>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <button id="expandSelectBtn" onclick="if(openExpandFid)toggleSelectMode(openExpandFid)"
+        <button id="expandSelectBtn" class="admin-only" onclick="if(openExpandFid)toggleSelectMode(openExpandFid)"
                 style="padding:6px 12px;font-size:13px;border-radius:6px;border:1px solid #444;background:#222;color:#ccc;cursor:pointer">🔲 多選</button>
         <button class="close" onclick="closeExpand()">✕</button>
       </div>
@@ -816,6 +1021,15 @@ let removedSectionCollapsed = true;   // 「已移除」區段預設折疊
 let removedSectionMaterialized = false;
 let unloadTimers = new Map();   // year -> setTimeout id（用於折疊後 TTL 釋放 DOM）
 const UNLOAD_TTL_MS = 3 * 60 * 1000;  // 折疊超過 3 分鐘 → 移除 img DOM
+
+// 初始化 user / role 顯示
+document.getElementById('whoami').textContent = window.CURRENT_USER || '(未登入)';
+document.getElementById('role-tag').textContent = window.IS_ADMIN ? '(admin)' : '(viewer · 唯讀)';
+if(window.IS_ADMIN){ document.body.classList.add('admin'); }
+
+function logout(){
+  fetch('/api/logout',{method:'POST'}).then(()=>location.href='/login');
+}
 
 loadStats();
 loadPage(0);
@@ -887,17 +1101,20 @@ function renderGrid(){
 
 function renderListRow(c){
   const fid = c.id;
+  const nameClick = window.IS_ADMIN ? `onclick="editNameInline('${fid}')"` : '';
+  const actions = window.IS_ADMIN ? `
+    <div class="lr-actions">
+      <button onclick="editNameInline('${fid}')">✏️ 改名</button>
+      <button onclick="openMerge('${fid}')">🔗 合併</button>
+      <button onclick="undoAction('${fid}')">↩ 取消命名</button>
+    </div>` : '<div></div>';
   return `
     <div class="list-row" id="row_${fid}">
       <img class="lr-thumb" src="/thumb/${fid}.jpg?v=${c.thumb_v||0}" onerror="this.style.visibility='hidden'">
       <div class="lr-id">${fid}</div>
-      <div class="lr-name" id="name_${fid}" onclick="editNameInline('${fid}')">${c.name}</div>
+      <div class="lr-name" id="name_${fid}" ${nameClick}>${c.name}</div>
       <div class="lr-count">${c.count} 張</div>
-      <div class="lr-actions">
-        <button onclick="editNameInline('${fid}')">✏️ 改名</button>
-        <button onclick="openMerge('${fid}')">🔗 合併</button>
-        <button onclick="undoAction('${fid}')">↩ 取消命名</button>
-      </div>
+      ${actions}
     </div>
   `;
 }
@@ -958,22 +1175,24 @@ function renderCard(c){
   ).join('');
 
   let actions = '';
-  if(isSkipped){
-    actions = `<span style="color:#666">已略過</span>
-      <button class="btn btn-edit" onclick="toggleSkip('${fid}')">↩ 恢復</button>`;
-  } else if(isNamed){
-    actions = `
-      <button class="btn btn-edit" onclick="editName('${fid}')">✏️ 改名</button>
-      <button class="btn btn-undo" onclick="undoAction('${fid}')">↩ 取消命名</button>
-      <button class="btn btn-merge" onclick="openMerge('${fid}')">🔗 合併</button>
-    `;
-  } else {
-    actions = `
-      <input type="text" id="inp_${fid}" placeholder="輸入名稱..." onkeydown="if(event.key==='Enter')saveName('${fid}')">
-      <button class="btn btn-save" onclick="saveName('${fid}')">💾</button>
-      <button class="btn btn-skip" onclick="toggleSkip('${fid}')">⏭️ 略過</button>
-      <button class="btn btn-merge" onclick="openMerge('${fid}')">🔗 合併</button>
-    `;
+  if(window.IS_ADMIN){
+    if(isSkipped){
+      actions = `<span style="color:#666">已略過</span>
+        <button class="btn btn-edit" onclick="toggleSkip('${fid}')">↩ 恢復</button>`;
+    } else if(isNamed){
+      actions = `
+        <button class="btn btn-edit" onclick="editName('${fid}')">✏️ 改名</button>
+        <button class="btn btn-undo" onclick="undoAction('${fid}')">↩ 取消命名</button>
+        <button class="btn btn-merge" onclick="openMerge('${fid}')">🔗 合併</button>
+      `;
+    } else {
+      actions = `
+        <input type="text" id="inp_${fid}" placeholder="輸入名稱..." onkeydown="if(event.key==='Enter')saveName('${fid}')">
+        <button class="btn btn-save" onclick="saveName('${fid}')">💾</button>
+        <button class="btn btn-skip" onclick="toggleSkip('${fid}')">⏭️ 略過</button>
+        <button class="btn btn-merge" onclick="openMerge('${fid}')">🔗 合併</button>
+      `;
+    }
   }
 
   const badges = [];
@@ -1132,7 +1351,7 @@ function renderExpandBody(){
     const imgClick = inSelect
       ? `onclick="toggleThumbSelect('${fid}','${safeImg}')"`
       : `onclick="window.open('/image/${img}')" style="cursor:pointer"`;
-    const actions = inSelect ? '' : `
+    const actions = (inSelect || !window.IS_ADMIN) ? '' : `
       <div class="thumb-actions">
         <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為群組特寫照">⭐</button>
         <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群">→</button>
@@ -1507,9 +1726,27 @@ function post(url,data){
 
 def main():
     port = 8765
-    server = HTTPServer(("127.0.0.1", port), Handler)
-    print(f"人臉命名伺服器 v4：http://127.0.0.1:{port}")
-    print(f"分頁：每頁 {PAGE_SIZE} 個群組 · 略過 → 排到最後 · 合併 → 折疊到 target")
+    # Bind 0.0.0.0 so家用 LAN 設備（手機、平板等）能存取
+    bind_host = os.environ.get("BIND_HOST", "0.0.0.0")
+
+    # 啟動前確認有 admin
+    users = _auth.load_users()
+    has_admin = any(u.get("role") == "admin" for u in users.values())
+    if not has_admin:
+        print("=" * 60)
+        print("⚠️  尚未建立 admin 帳號。請先跑：")
+        print()
+        print("  uv run python src/manage_users.py user-add <name> \\")
+        print("      --role admin --password '<your_pw>'")
+        print()
+        print(f"  使用者/群組設定檔位於 {_auth.AUTH_DIR}")
+        print("=" * 60)
+        return
+
+    server = HTTPServer((bind_host, port), Handler)
+    visible = "127.0.0.1" if bind_host == "127.0.0.1" else "<LAN ip>"
+    print(f"人臉命名伺服器 v5：http://{visible}:{port}   (bind {bind_host})")
+    print(f"使用者: {len(users)}, admin: {sum(1 for u in users.values() if u.get('role')=='admin')}")
     print("按 Ctrl+C 結束")
     try:
         server.serve_forever()
