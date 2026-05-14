@@ -68,6 +68,26 @@ def _next_user_face_id(faces, moves) -> str:
     return f"face_u{n}"
 
 
+SKIP_PATH_FRAGMENTS = (
+    "/.thumbnails/", "/.trash/", "/.trashes/", "/.cache/",
+    "/@eadir/", "/__macosx/", "/.spotlight-v100/", "/.fseventsd/",
+)
+
+
+def _is_skip_path(p: str) -> bool:
+    if not p:
+        return True
+    pl = p.lower().replace("\\", "/")
+    for frag in SKIP_PATH_FRAGMENTS:
+        if frag in pl:
+            return True
+    # 任何路徑段以 . 開頭（如 /.thumbnails/、/foo/.cache/...）
+    for part in p.split("/"):
+        if part.startswith(".") and part not in (".", ".."):
+            return True
+    return False
+
+
 def _resolve_target(merges, fid):
     """跟著 merge 鏈走到最終 target（防止 A→B→C 失效）。"""
     seen = set()
@@ -412,9 +432,10 @@ class Handler(SimpleHTTPRequestHandler):
             for s in merged_srcs:
                 own_imgs.extend(clusters.get(s, {}).get("images", []))
 
-            # 去重保序
+            # 過濾系統/縮圖路徑 + 去重保序
             seen = set()
-            all_imgs = [x for x in own_imgs if not (x in seen or seen.add(x))]
+            all_imgs = [x for x in own_imgs
+                        if not _is_skip_path(x) and not (x in seen or seen.add(x))]
 
             # 被移出此群（顯示層級）：moves.from == fid 且 to != fid
             moved_away = set(moves_out.get(fid, {}).keys())
@@ -463,6 +484,8 @@ class Handler(SimpleHTTPRequestHandler):
             paths = []
             seen = set()
             for p in moves_in[fid]:
+                if _is_skip_path(p):
+                    continue
                 if p not in seen:
                     seen.add(p)
                     paths.append(p)

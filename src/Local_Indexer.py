@@ -35,6 +35,28 @@ LOGGER = logging.getLogger("LocalIndexer")
 
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
+# 永遠跳過的目錄名（系統 cache / thumbnails / 其他非原始照片）
+SKIP_DIR_NAMES = {
+    ".thumbnails",      # KDE / many gallery apps
+    ".trash",
+    ".trashes",
+    ".spotlight-v100",
+    ".fseventsd",
+    ".temporaryitems",
+    "__macosx",
+    "@eadir",           # Synology NAS thumbnail folder
+    ".cache",
+}
+
+
+def _should_skip_dir(name: str) -> bool:
+    n = name.lower()
+    if n.startswith("."):           # 任何 dotfile/dotdir
+        return True
+    if n in SKIP_DIR_NAMES:
+        return True
+    return False
+
 
 # ---------- 高效目錄遍歷 -----------------------------------------------------
 
@@ -48,10 +70,14 @@ def iter_images(root: Path) -> Iterator[Path]:
                 for entry in it:
                     try:
                         if entry.is_dir(follow_symlinks=False):
+                            if _should_skip_dir(entry.name):
+                                LOGGER.debug("Skip dir %s", entry.path)
+                                continue
                             stack.append(entry.path)
                         elif entry.is_file(follow_symlinks=False):
-                            # 跳過 macOS 資源檔 (._xxx)
-                            if entry.name.startswith("._"):
+                            if entry.name.startswith("._"):       # macOS resource fork
+                                continue
+                            if entry.name.startswith("."):         # 其他隱藏檔
                                 continue
                             ext = os.path.splitext(entry.name)[1].lower()
                             if ext in SUPPORTED_EXTS:
