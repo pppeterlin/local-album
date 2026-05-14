@@ -757,7 +757,11 @@ h1{text-align:center;margin-bottom:6px}
         <h3 id="expandTitle"></h3>
         <span class="meta" id="expandMeta"></span>
       </div>
-      <button class="close" onclick="closeExpand()">✕</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="expandSelectBtn" onclick="if(openExpandFid)toggleSelectMode(openExpandFid)"
+                style="padding:6px 12px;font-size:13px;border-radius:6px;border:1px solid #444;background:#222;color:#ccc;cursor:pointer">🔲 多選</button>
+        <button class="close" onclick="closeExpand()">✕</button>
+      </div>
     </div>
     <div class="expand-body" id="expandBody"></div>
   </div>
@@ -1083,13 +1087,16 @@ function renderExpandBody(){
   const monthOptions = Array.from({length:12},(_,i)=>i+1).map(m =>
     `<option value="${m}" ${String(m)===String(monthFilter)?'selected':''}>${m} 月</option>`).join('');
 
+  // header 多選按鈕的狀態同步
+  const headerBtn = document.getElementById('expandSelectBtn');
+  if(headerBtn){
+    headerBtn.textContent = inSelect ? '✓ 多選中' : '🔲 多選';
+    headerBtn.style.background = inSelect ? '#4fc3f7' : '#222';
+    headerBtn.style.color = inSelect ? '#000' : '#ccc';
+    headerBtn.style.borderColor = inSelect ? '#4fc3f7' : '#444';
+  }
   const tools = `
-    <div class="expand-tools">
-      <button class="${inSelect?'active':''}" onclick="toggleSelectMode('${fid}')">
-        ${inSelect ? '✓ 多選中' : '🔲 多選'}
-      </button>
-      ${inSelect ? '<span class="hint">點縮圖切換選取；底部 bar 移動</span>' : ''}
-    </div>
+    ${inSelect ? '<div class="expand-tools"><span class="hint">點縮圖切換選取；底部 bar 操作</span></div>' : ''}
     <div class="year-filter">
       <span style="color:#888">篩選：</span>
       <select onchange="yearFilter=this.value; renderExpandBody();">
