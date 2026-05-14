@@ -55,6 +55,19 @@ def save_merges(m): save_json(MERGES_FILE, m)
 def save_moves(m):  save_json(MOVES_FILE, m)
 
 
+def _next_user_face_id(faces, moves) -> str:
+    """產生下一個 user-created face id (`face_u1`, `face_u2`, ...)，避開既有 cluster 與既有 moves target。"""
+    existing = set((faces.get("clusters") or {}).keys())
+    for m in moves:
+        t = m.get("to", "")
+        if t:
+            existing.add(t)
+    n = 1
+    while f"face_u{n}" in existing:
+        n += 1
+    return f"face_u{n}"
+
+
 def _resolve_target(merges, fid):
     """跟著 merge 鏈走到最終 target（防止 A→B→C 失效）。"""
     seen = set()
@@ -178,17 +191,17 @@ class Handler(SimpleHTTPRequestHandler):
             self.json_response({"ok": True})
 
         elif path == "/api/move":
-            # 把單張照片從 from_id 群移到 to_id 群
             moves = load_moves()
             from_id = body.get("from_id")
             to_id = body.get("to_id")
             img_path = body.get("image_path")
+            if to_id == "__new__":
+                to_id = _next_user_face_id(load_faces(), moves)
             if from_id and to_id and img_path and from_id != to_id:
-                # 移除同一張的舊紀錄（避免重複）
                 moves = [m for m in moves if m.get("path") != img_path]
                 moves.append({"path": img_path, "from": from_id, "to": to_id})
                 save_moves(moves)
-            self.json_response({"ok": True})
+            self.json_response({"ok": True, "to_id": to_id})
 
         elif path == "/api/unmove":
             moves = load_moves()
@@ -203,13 +216,16 @@ class Handler(SimpleHTTPRequestHandler):
             from_id = body.get("from_id")
             to_id = body.get("to_id")
             paths = body.get("paths", [])
+            # 特殊 sentinel：建立新群組
+            if to_id == "__new__":
+                to_id = _next_user_face_id(load_faces(), moves)
             if from_id and to_id and paths and from_id != to_id:
                 ps = set(paths)
                 moves = [m for m in moves if m.get("path") not in ps]
                 for p in paths:
                     moves.append({"path": p, "from": from_id, "to": to_id})
                 save_moves(moves)
-            self.json_response({"ok": True, "moved": len(paths)})
+            self.json_response({"ok": True, "moved": len(paths), "to_id": to_id})
 
         elif path == "/api/set_thumb":
             fid = body.get("face_id")
@@ -418,6 +434,38 @@ class Handler(SimpleHTTPRequestHandler):
                 "merged_from": merged_srcs,
                 "moved_in_count": len([p for p in moved_in if p not in rem_set]),
                 "moved_away_count": len(moved_away),
+                "user_created": False,
+            })
+
+        # User-created clusters (透過 batch move 產生的新 group)：
+        # 它們不在 clusters dict 裡，但被 moves 指為 to，需要補上 synthetic 條目
+        native_ids = set(clusters.keys())
+        synthetic_targets = set()
+        for tgt in moves_in.keys():
+            if tgt not in native_ids and tgt not in merges:
+                synthetic_targets.add(tgt)
+        for fid in synthetic_targets:
+            paths = []
+            seen = set()
+            for p in moves_in[fid]:
+                if p not in seen:
+                    seen.add(p)
+                    paths.append(p)
+            rem = list(removed.get(fid, []))
+            rem_set = set(rem)
+            active = [p for p in paths if p not in rem_set]
+            result.append({
+                "id": fid,
+                "name": names.get(fid, ""),
+                "count": len(active),
+                "original_count": len(paths),
+                "images": active,
+                "removed": rem,
+                "skipped": fid in skipped,
+                "merged_from": [],
+                "moved_in_count": len(active),
+                "moved_away_count": 0,
+                "user_created": True,
             })
 
         # filter
@@ -629,9 +677,12 @@ h1{text-align:center;margin-bottom:6px}
     <div id="movePreview" style="text-align:center;margin-bottom:12px"></div>
     <input type="text" id="moveFilter" placeholder="輸入名稱或 ID 過濾..." oninput="filterMoveOptions()">
     <select id="moveTarget" size="10"></select>
-    <div class="modal-actions">
-      <button class="btn btn-skip" onclick="closeMove()">取消</button>
-      <button class="btn btn-save" onclick="confirmMove()">移動</button>
+    <div class="modal-actions" style="justify-content:space-between">
+      <button class="btn btn-merge" onclick="moveToNew()" title="建立新群組並把選的照片放進去">✨ 移到新群組</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-skip" onclick="closeMove()">取消</button>
+        <button class="btn btn-save" onclick="confirmMove()">移動</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1077,11 +1128,20 @@ function filterMoveOptions(){
 function confirmMove(){
   const tgt = document.getElementById('moveTarget').value;
   if(!tgt) return;
+  doMove(tgt);
+}
+
+function moveToNew(){
+  // 建立新群組並把選的（或單張）放進去
+  doMove('__new__');
+}
+
+function doMove(tgt){
   const isBatch = movePath === null;
   const req = isBatch
     ? post('/api/move-batch',{from_id:moveSource, to_id:tgt, paths:[...selectedPaths]})
     : post('/api/move',{from_id:moveSource, to_id:tgt, image_path:movePath});
-  req.then(()=>{
+  req.then(r=>r.json()).then(d=>{
     closeMove();
     if(isBatch){
       selectMode = null;
@@ -1090,6 +1150,12 @@ function confirmMove(){
     }
     loadStats();
     loadPage(currentPage);
+    if(tgt === '__new__' && d && d.to_id){
+      // 提示新建的 cluster id
+      setTimeout(()=>{
+        alert(`已建立新群組 ${d.to_id}，請至「未命名」頁籤或滾動找到該卡片命名。`);
+      }, 100);
+    }
   });
 }
 
