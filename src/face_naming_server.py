@@ -26,6 +26,7 @@ MERGES_FILE = FACES_DIR / "face_merges.json"
 MOVES_FILE = FACES_DIR / "face_moves.json"
 THUMB_OVERRIDES_FILE = FACES_DIR / "face_thumb_overrides.json"
 THUMBS_DIR = FACES_DIR / "face_thumbs"
+IMG_THUMB_CACHE = FACES_DIR / "img_thumb_cache"
 PAGE_SIZE = 20
 
 
@@ -77,6 +78,16 @@ class Handler(SimpleHTTPRequestHandler):
         elif path.startswith("/thumb/"):
             thumb = THUMBS_DIR / unquote(path[7:])
             self.serve_file(thumb, "image/jpeg")
+
+        elif path.startswith("/img_thumb/"):
+            # 即時縮圖 + 磁碟 cache，避免瀏覽器載原圖吃爆記憶體
+            try:
+                w = int(qs.get("w", ["256"])[0])
+            except ValueError:
+                w = 256
+            w = max(64, min(w, 1024))
+            orig = self.fix_path(path[11:])
+            self.serve_img_thumb(orig, w)
 
         elif path == "/api/page":
             page = int(qs.get("page", [0])[0])
@@ -232,6 +243,40 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(content.encode())
+
+    def serve_img_thumb(self, orig_path: str, width: int):
+        """回傳 orig_path 的縮圖（長邊 width）；磁碟 cache。"""
+        import hashlib
+        from pathlib import Path as _P
+        orig = _P(orig_path)
+        if not orig.exists() or not orig.is_file():
+            self.send_error(404, str(orig_path))
+            return
+        key = hashlib.md5(orig_path.encode("utf-8")).hexdigest()
+        IMG_THUMB_CACHE.mkdir(parents=True, exist_ok=True)
+        cache_file = IMG_THUMB_CACHE / f"{key}_{width}.jpg"
+        if not cache_file.exists() or cache_file.stat().st_mtime < orig.stat().st_mtime:
+            try:
+                from PIL import Image, ImageOps
+            except ImportError:
+                self.send_error(500, "Pillow not installed")
+                return
+            try:
+                with Image.open(orig_path) as im:
+                    im = ImageOps.exif_transpose(im)
+                    im.thumbnail((width, width), Image.LANCZOS)
+                    if im.mode != "RGB":
+                        im = im.convert("RGB")
+                    im.save(cache_file, "JPEG", quality=82, optimize=True)
+            except Exception as e:  # noqa: BLE001
+                self.send_error(500, f"thumb failed: {e}")
+                return
+        self.send_response(200)
+        self.send_header("Content-type", "image/jpeg")
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        with open(cache_file, "rb") as f:
+            self.wfile.write(f.read())
 
     def serve_file(self, path, mime):
         if isinstance(path, str):
@@ -740,7 +785,8 @@ function renderCard(c){
 
   const previewCount = Math.min(Math.max(6, c.images.length), 8);
   const previewImgs = c.images.slice(0,previewCount).map(img=>
-    `<img src="/image/${img}" onclick="window.open(this.src)">`
+    `<img src="/img_thumb/${img}?w=200" loading="lazy" decoding="async"
+          onclick="window.open('/image/${img}')">`
   ).join('');
 
   let actions = '';
@@ -831,7 +877,7 @@ function renderExpandBody(){
     const wrapCls = 'thumb-wrap' + (inSelect?' selectable':'') + (isSel?' selected':'');
     const imgClick = inSelect
       ? `onclick="toggleThumbSelect('${fid}','${safeImg}')"`
-      : `onclick="window.open('/image/${img}')"`;
+      : `onclick="window.open('/image/${img}')" style="cursor:pointer"`;
     const actions = inSelect ? '' : `
       <div class="thumb-actions">
         <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為群組特寫照">⭐</button>
@@ -839,14 +885,14 @@ function renderExpandBody(){
         <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除">✕</button>
       </div>`;
     return `<div class="${wrapCls}" data-thumb="${fid}|${img}">
-      <img src="/image/${img}" ${imgClick}>
+      <img src="/img_thumb/${img}?w=300" loading="lazy" decoding="async" ${imgClick}>
       ${actions}
     </div>`;
   }).join('');
 
   const removedImgs = (c.removed||[]).map(img=>
     `<div class="thumb-wrap">
-      <img src="/image/${img}">
+      <img src="/img_thumb/${img}?w=200" loading="lazy" decoding="async">
       <button class="restore-btn" onclick="restoreImg('${fid}','${img.replace(/'/g,"\\'")}')" title="恢復">↩</button>
     </div>`
   ).join('');
@@ -1001,7 +1047,7 @@ function openMove(fid, imgPath){
   movePath = imgPath;
   document.getElementById('moveFilter').value = '';
   document.getElementById('movePreview').innerHTML =
-    `<img src="/image/${imgPath}" style="max-height:140px;border-radius:6px;border:2px solid #333">
+    `<img src="/img_thumb/${imgPath}?w=300" style="max-height:140px;border-radius:6px;border:2px solid #333">
      <div style="color:#888;font-size:12px;margin-top:6px">來自 ${fid}</div>`;
   fetch('/api/clusters').then(r=>r.json()).then(list=>{
     allClusters = list.filter(c=>c.id !== fid);
