@@ -848,9 +848,8 @@ function renderCard(c){
       <button class="btn btn-edit" onclick="toggleSkip('${fid}')">↩ 恢復</button>`;
   } else if(isNamed){
     actions = `
-      <div class="named-label">✓ ${c.name}</div>
-      <button class="btn btn-edit" onclick="editName('${fid}')">✏️ 編輯</button>
-      <button class="btn btn-undo" onclick="undoAction('${fid}')">↩ 取消</button>
+      <button class="btn btn-edit" onclick="editName('${fid}')">✏️ 改名</button>
+      <button class="btn btn-undo" onclick="undoAction('${fid}')">↩ 取消命名</button>
       <button class="btn btn-merge" onclick="openMerge('${fid}')">🔗 合併</button>
     `;
   } else {
@@ -875,7 +874,8 @@ function renderCard(c){
     <div class="${cls}" id="card_${fid}">
       <div class="card-top">
         <div class="face-meta">
-          <h3>${fid}</h3>
+          <h3>${c.name || fid}</h3>
+          ${c.name ? `<div style="color:#666;font-size:11px;font-family:monospace;margin-top:2px">${fid}</div>` : ''}
           <div class="count">${c.count} 張${c.count!==c.original_count?' (原 '+c.original_count+')':''}</div>
           ${mergedBadge}
         </div>
@@ -920,7 +920,7 @@ function renderExpandBody(){
   const fid = c.id;
   const inSelect = selectMode === fid;
 
-  document.getElementById('expandTitle').textContent = c.name ? `${fid} · ${c.name}` : fid;
+  document.getElementById('expandTitle').textContent = c.name ? `${c.name}  (${fid})` : fid;
   document.getElementById('expandMeta').textContent =
     `${c.count} 張${c.count!==c.original_count?' (原 '+c.original_count+')':''}`;
 
