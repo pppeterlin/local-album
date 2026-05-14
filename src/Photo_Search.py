@@ -423,9 +423,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     base_url = args.base_url or os.environ.get("VISION_BASE_URL")
     translate_model = args.translate_model or os.environ.get("VISION_MODEL")
 
-    # 自動偵測 labels.json（data/labels/ 下）
-    project_dir = Path(__file__).resolve().parent.parent
-    labels_path = project_dir / "data" / "labels" / "labels.json"
+    # 自動偵測 labels.json（METADATA_DIR/labels/ 下）
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from _paths import LABELS_DIR  # noqa: E402
+    labels_path = LABELS_DIR / "labels.json"
     if not labels_path.exists():
         labels_path = None
         LOGGER.info("No labels.json found in project dir — using CLIP-only search")

@@ -44,11 +44,14 @@ class PhotoIndex:
     """統一照片索引引擎。"""
 
     def __init__(self, project_dir: str):
+        # project_dir kept for backwards compat; actual locations come from _paths
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from _paths import FACES_DIR, INDEX_DIR  # noqa: E402
         self.project_dir = Path(project_dir)
-        # 索引、人臉名稱、地點名稱統一放 data/index/、data/faces/
-        self.index_path = self.project_dir / "data" / "index" / "photo_index.json"
-        self.face_names_path = self.project_dir / "data" / "faces" / FACE_NAMES_FILE
-        self.location_names_path = self.project_dir / "data" / "index" / LOCATION_NAMES_FILE
+        self.index_path = INDEX_DIR / "photo_index.json"
+        self.face_names_path = FACES_DIR / FACE_NAMES_FILE
+        self.location_names_path = INDEX_DIR / LOCATION_NAMES_FILE
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
         self.face_names_path.parent.mkdir(parents=True, exist_ok=True)
 

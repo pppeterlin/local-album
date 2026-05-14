@@ -11,13 +11,15 @@ face_naming_server.py — 人臉命名伺服器 v4
 """
 
 import json
+import sys
 from collections import defaultdict
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import unquote, urlparse, parse_qs
 
-PROJECT_DIR = Path(__file__).resolve().parent.parent
-FACES_DIR = PROJECT_DIR / "data" / "faces"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _paths import PROJECT_ROOT as PROJECT_DIR, FACES_DIR  # noqa: E402
+
 FACES_FILE = FACES_DIR / "face_clusters.json"
 NAMES_FILE = FACES_DIR / "face_names.json"
 REMOVED_FILE = FACES_DIR / "face_removed.json"

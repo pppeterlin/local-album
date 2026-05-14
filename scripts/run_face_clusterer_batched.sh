@@ -8,11 +8,20 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-LABELS="${LABELS:-data/labels/labels_all.json}"
-OUT="${OUT:-data/faces/face_clusters.json}"
+# Load .env (for METADATA_DIR etc)
+if [ -f .env ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source .env
+    set +a
+fi
+
+METADATA_DIR="${METADATA_DIR:-$PROJECT_ROOT/data}"
+LABELS="${LABELS:-$METADATA_DIR/labels/labels_all.json}"
+OUT="${OUT:-$METADATA_DIR/faces/face_clusters.json}"
 BATCH_SIZE="${BATCH_SIZE:-2000}"
 SLEEP_BETWEEN="${SLEEP_BETWEEN:-30}"
-JSONL="data/faces/face_assignments.jsonl"
+JSONL="$METADATA_DIR/faces/face_assignments.jsonl"
 
 TOTAL=$(python3 -c "import json; d=json.load(open('$LABELS')); print(sum(1 for r in d.get('results',[]) if 'error' not in r))")
 echo "Total images to scan: $TOTAL"
