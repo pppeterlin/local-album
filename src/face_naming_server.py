@@ -24,6 +24,7 @@ REMOVED_FILE = FACES_DIR / "face_removed.json"
 SKIPPED_FILE = FACES_DIR / "face_skipped.json"
 MERGES_FILE = FACES_DIR / "face_merges.json"
 MOVES_FILE = FACES_DIR / "face_moves.json"
+THUMB_OVERRIDES_FILE = FACES_DIR / "face_thumb_overrides.json"
 THUMBS_DIR = FACES_DIR / "face_thumbs"
 PAGE_SIZE = 20
 
@@ -197,6 +198,12 @@ class Handler(SimpleHTTPRequestHandler):
                 save_moves(moves)
             self.json_response({"ok": True, "moved": len(paths)})
 
+        elif path == "/api/set_thumb":
+            fid = body.get("face_id")
+            img_path = body.get("image_path")
+            result = self._set_custom_thumb(fid, img_path)
+            self.json_response(result)
+
         else:
             self.send_error(404)
 
@@ -238,6 +245,54 @@ class Handler(SimpleHTTPRequestHandler):
                 self.wfile.write(f.read())
         else:
             self.send_error(404, str(path))
+
+    # ---- thumb crop helper ----
+
+    def _set_custom_thumb(self, face_id: str, img_path: str) -> dict:
+        """裁切指定照片裡屬於 face_id (含合併源) 的人臉、覆寫 face_thumbs/<fid>.jpg"""
+        if not face_id or not img_path:
+            return {"ok": False, "error": "missing face_id or image_path"}
+        from pathlib import Path as _P
+        if not _P(img_path).exists():
+            return {"ok": False, "error": f"image not found: {img_path}"}
+
+        # 解析合併源（找出視覺上「同一個人」的所有 face_id）
+        merges = load_merges()
+        # 反查：哪些 source 合進這個 target
+        merged_in = {face_id}
+        for src, tgt in merges.items():
+            final = _resolve_target(merges, src)
+            if final == face_id:
+                merged_in.add(src)
+
+        # 在 face_clusters.images[img_path] 找對應的 face record
+        faces = load_faces()
+        rec = (faces.get("images", {}) or {}).get(img_path, [])
+        target_face = None
+        for f in rec:
+            if f.get("face_id") in merged_in:
+                target_face = f
+                break
+        if not target_face:
+            return {"ok": False,
+                    "error": f"找不到屬於 {face_id} 的人臉於 {img_path}（可能是 face detector 沒偵測到）"}
+
+        # 裁切
+        try:
+            from generate_face_thumbs import crop_face_thumb
+        except ImportError:
+            return {"ok": False, "error": "無法載入 crop_face_thumb"}
+
+        out_path = THUMBS_DIR / f"{face_id}.jpg"
+        ok = crop_face_thumb(img_path, target_face["bbox"], out_path)
+        if not ok:
+            return {"ok": False, "error": "裁切失敗（圖檔損壞或 bbox 無效）"}
+
+        # 記錄手動指定
+        overrides = load_json(THUMB_OVERRIDES_FILE, {})
+        overrides[face_id] = img_path
+        save_json(THUMB_OVERRIDES_FILE, overrides)
+        return {"ok": True, "thumb_path": str(out_path), "image_path": img_path}
 
     # ---- data assembly ----
 
@@ -434,6 +489,7 @@ h1{text-align:center;margin-bottom:6px}
 .expand-photos .thumb-actions button{width:22px;height:22px;border-radius:50%;border:none;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;color:#fff;padding:0}
 .expand-photos .move-btn{background:rgba(76,175,80,.85)}
 .expand-photos .remove-btn{background:rgba(239,83,80,.85)}
+.expand-photos .thumb-btn{background:rgba(255,193,7,.85)}
 .actions{display:flex;gap:6px;padding:10px 14px;border-top:1px solid #2a2a2a;flex-wrap:wrap}
 .actions input{flex:1;min-width:120px;padding:7px 10px;border:1px solid #333;border-radius:5px;background:#222;color:#fff;font-size:13px}
 .actions input:focus{border-color:#4fc3f7;outline:none}
@@ -778,6 +834,7 @@ function renderExpandBody(){
       : `onclick="window.open('/image/${img}')"`;
     const actions = inSelect ? '' : `
       <div class="thumb-actions">
+        <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為群組特寫照">⭐</button>
         <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群">→</button>
         <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除">✕</button>
       </div>`;
@@ -989,6 +1046,23 @@ function confirmMove(){
 }
 
 function closeMove(){document.getElementById('moveModal').classList.remove('active');}
+
+function setAsThumb(fid, img){
+  fetch('/api/set_thumb', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({face_id: fid, image_path: img})
+  }).then(r=>r.json()).then(d=>{
+    if(!d.ok){ alert('設定失敗：' + (d.error || '未知錯誤')); return; }
+    // cache-bust 換新的縮圖
+    const ts = Date.now();
+    document.querySelectorAll(`img.face-thumb[src*="/thumb/${fid}.jpg"]`).forEach(el=>{
+      el.src = `/thumb/${fid}.jpg?t=${ts}`;
+    });
+    // expand modal 內也可能有 face thumb（暫時沒，但 face naming 卡片有）
+    const lrThumb = document.querySelector(`.lr-thumb[src*="/thumb/${fid}.jpg"]`);
+    if(lrThumb) lrThumb.src = `/thumb/${fid}.jpg?t=${ts}`;
+  });
+}
 
 function removeImg(fid,img){
   post('/api/remove',{face_id:fid,image_path:img}).then(()=>{
