@@ -805,7 +805,10 @@ let selectMode = null;          // 多選模式作用中的 cluster id
 let selectedPaths = new Set();  // 已選中的照片路徑
 let yearFilter = '';            // '' = 全部
 let monthFilter = '';           // '' = 全部
-let collapsedYears = new Set(); // 摺疊起來的年份
+let collapsedYears = new Set(); // 已摺疊（key = String(year) 或 '無日期'）
+let materializedYears = new Set(); // 已 render 出 img DOM 的年份
+let unloadTimers = new Map();   // year -> setTimeout id（用於折疊後 TTL 釋放 DOM）
+const UNLOAD_TTL_MS = 3 * 60 * 1000;  // 折疊超過 3 分鐘 → 移除 img DOM
 
 loadStats();
 loadPage(0);
@@ -1002,6 +1005,9 @@ function openExpand(fid){
   yearFilter = '';
   monthFilter = '';
   collapsedYears.clear();
+  materializedYears.clear();
+  for(const t of unloadTimers.values()) clearTimeout(t);
+  unloadTimers.clear();
   if(selectMode && selectMode !== fid){
     selectMode = null;
     selectedPaths.clear();
@@ -1009,10 +1015,21 @@ function openExpand(fid){
   }
   document.getElementById('expandBody').innerHTML = '<div style="padding:30px;color:#888;text-align:center">載入中…</div>';
   document.getElementById('expandModal').classList.add('active');
-  // Lazy fetch dates
   fetch(`/api/cluster_meta?fid=${encodeURIComponent(fid)}`).then(r=>r.json()).then(meta=>{
-    if(openExpandFid !== fid) return;  // user 已切換了
+    if(openExpandFid !== fid) return;
     openExpandMeta = meta;
+    // 預設：只展開最新年度，其餘折疊。「無日期」也預設折疊。
+    const yearSet = new Set();
+    let hasUndated = false;
+    for(const x of meta.images){
+      if(x.year) yearSet.add(String(x.year));
+      else hasUndated = true;
+    }
+    const ys = [...yearSet].sort((a,b)=>Number(b)-Number(a));
+    const latest = ys[0];
+    collapsedYears = new Set(ys.filter(y => y !== latest));
+    if(hasUndated) collapsedYears.add('無日期');
+    materializedYears = new Set(latest ? [latest] : []);
     renderExpandBody();
   });
 }
@@ -1020,6 +1037,11 @@ function openExpand(fid){
 function closeExpand(){
   document.getElementById('expandModal').classList.remove('active');
   openExpandFid = null;
+  openExpandMeta = null;
+  collapsedYears.clear();
+  materializedYears.clear();
+  for(const t of unloadTimers.values()) clearTimeout(t);
+  unloadTimers.clear();
   if(selectMode){
     selectMode = null;
     selectedPaths.clear();
@@ -1076,17 +1098,16 @@ function renderExpandBody(){
       <span style="color:#888;margin-left:auto">顯示 ${filtered.length} / ${allItems.length}</span>
     </div>`;
 
-  // 按年分組（同年內已按 ts desc）
+  // 按年分組（同年內已按 ts desc），key 統一為 string
   const byYear = new Map();
   for(const x of filtered){
-    const key = x.year || '無日期';
+    const key = String(x.year || '無日期');
     if(!byYear.has(key)) byYear.set(key, []);
     byYear.get(key).push(x);
   }
-  // year keys：數字降序、最後放「無日期」
   const yearKeys = [...byYear.keys()].sort((a,b)=>{
     if(a==='無日期') return 1; if(b==='無日期') return -1;
-    return b-a;
+    return Number(b) - Number(a);
   });
 
   function renderThumb(x){
@@ -1112,14 +1133,19 @@ function renderExpandBody(){
   const sections = yearKeys.map(y => {
     const items = byYear.get(y);
     const collapsed = collapsedYears.has(y);
-    return `<div class="year-section ${collapsed?'collapsed':''}">
+    // Materialize only if expanded OR previously expanded and TTL still alive
+    let materialized = materializedYears.has(y);
+    // 防呆：展開但還沒 materialize → 自動補
+    if(!collapsed && !materialized){ materializedYears.add(y); materialized = true; }
+    const bodyHtml = materialized
+      ? `<div class="expand-photos">${items.map(renderThumb).join('')}</div>`
+      : `<div style="color:#666;font-size:12px;padding:6px 4px">點選展開以載入</div>`;
+    return `<div class="year-section ${collapsed?'collapsed':''}" data-year="${y}">
       <div class="year-header" onclick="toggleYear('${y}')">
         <span>${y} <span style="color:#888;font-weight:400;font-size:12px">(${items.length} 張)</span></span>
         <span class="toggle">▼</span>
       </div>
-      <div class="year-body">
-        <div class="expand-photos">${items.map(renderThumb).join('')}</div>
-      </div>
+      <div class="year-body">${bodyHtml}</div>
     </div>`;
   }).join('');
 
@@ -1139,8 +1165,25 @@ function renderExpandBody(){
 }
 
 function toggleYear(y){
-  if(collapsedYears.has(y)) collapsedYears.delete(y);
-  else collapsedYears.add(y);
+  y = String(y);
+  if(collapsedYears.has(y)){
+    // 展開：取消預定的 unload + materialize（若尚未）
+    collapsedYears.delete(y);
+    if(unloadTimers.has(y)){ clearTimeout(unloadTimers.get(y)); unloadTimers.delete(y); }
+    materializedYears.add(y);
+  } else {
+    // 折疊：留 DOM、但 TTL 過後釋放
+    collapsedYears.add(y);
+    if(unloadTimers.has(y)) clearTimeout(unloadTimers.get(y));
+    const t = setTimeout(()=>{
+      if(!openExpandFid) return;
+      if(!collapsedYears.has(y)) return;  // 已被重新展開
+      materializedYears.delete(y);
+      unloadTimers.delete(y);
+      renderExpandBody();
+    }, UNLOAD_TTL_MS);
+    unloadTimers.set(y, t);
+  }
   renderExpandBody();
 }
 
