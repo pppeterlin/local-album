@@ -119,7 +119,8 @@ def list_faces(
         [{id, name, count, sample_images}, ...]   sample_images are up to 3 paths.
     """
     idx = _load_index()
-    faces_path = idx.project_dir / "data" / "faces" / "face_clusters.json"
+    from _paths import FACES_DIR as _FD
+    faces_path = _FD / "face_clusters.json"
     if not faces_path.exists():
         return []
 
@@ -214,7 +215,8 @@ def index_stats() -> dict[str, Any]:
     with_gps = sum(1 for i in images.values() if i.get("gps"))
     with_faces = sum(1 for i in images.values() if i.get("faces"))
 
-    faces_path = idx.project_dir / "data" / "faces" / "face_clusters.json"
+    from _paths import FACES_DIR as _FD
+    faces_path = _FD / "face_clusters.json"
     total_clusters = 0
     if faces_path.exists():
         import json

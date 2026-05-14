@@ -11,8 +11,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROJECT_DIR = Path(__file__).resolve().parent.parent
-FACES_DIR = PROJECT_DIR / "data" / "faces"
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _paths import PROJECT_ROOT as PROJECT_DIR, FACES_DIR, LABELS_DIR, EMBEDDINGS_DIR  # noqa: E402
+
 FACES_FILE = FACES_DIR / "face_clusters.json"
 NAMES_FILE = FACES_DIR / "face_names.json"
 
@@ -88,8 +90,8 @@ def main():
 
     # 更新 photo_index.json
     print("\n更新索引...")
-    labels = PROJECT_DIR / "data" / "labels" / "labels.json"
-    embeddings = PROJECT_DIR / "data" / "embeddings" / "embeddings.pkl"
+    labels = LABELS_DIR / "labels.json"
+    embeddings = EMBEDDINGS_DIR / "embeddings.pkl"
     os.system(
         f'cd "{PROJECT_DIR}" && uv run python src/Photo_Index.py build '
         f'--labels "{labels}" --faces "{FACES_FILE}" --embeddings "{embeddings}"'

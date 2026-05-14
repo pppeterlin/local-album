@@ -103,7 +103,9 @@ uv run python src/Photo_Search.py data/embeddings/photos.pkl \
 │   └── mcp_server.py            MCP server (query-only, for agents)
 ├── scripts/
 │   └── run_pipeline.sh          End-to-end driver (index → sample → label)
-├── data/                        All generated artifacts (gitignored)
+├── data/                        Default location for generated artifacts
+│                                (gitignored; override with METADATA_DIR
+│                                env var — see .env.example)
 │   ├── embeddings/   *.pkl
 │   ├── samples/      *.json
 │   ├── labels/       *.json

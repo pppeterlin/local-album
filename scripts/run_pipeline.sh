@@ -37,11 +37,12 @@ BATCH_SIZE="${BATCH_SIZE:-4}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
 
 NAME="$(basename "$PHOTOS_DIR")"
-EMB="data/embeddings/${NAME}.pkl"
-SAMPLES="data/samples/${NAME}.json"
-LABELS="data/labels/${NAME}.json"
+METADATA_DIR="${METADATA_DIR:-$PROJECT_ROOT/data}"
+EMB="$METADATA_DIR/embeddings/${NAME}.pkl"
+SAMPLES="$METADATA_DIR/samples/${NAME}.json"
+LABELS="$METADATA_DIR/labels/${NAME}.json"
 
-mkdir -p data/embeddings data/samples data/labels
+mkdir -p "$METADATA_DIR/embeddings" "$METADATA_DIR/samples" "$METADATA_DIR/labels"
 
 echo "=========================================="
 echo "Pipeline: $NAME"

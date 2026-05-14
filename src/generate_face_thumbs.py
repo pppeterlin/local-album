@@ -14,8 +14,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-PROJECT_DIR = Path(__file__).resolve().parent.parent
-FACES_DIR = PROJECT_DIR / "data" / "faces"
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _paths import FACES_DIR  # noqa: E402
+
 FACES_FILE = FACES_DIR / "face_clusters.json"
 THUMBS_DIR = FACES_DIR / "face_thumbs"
 
