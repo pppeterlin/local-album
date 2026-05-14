@@ -78,7 +78,7 @@ def search_photos(
                        name like "Mom"). Use this for "photos containing X".
         faces_all:     Multiple-face filter — EVERY name/id in the list must
                        appear in the photo. Use for group-shot queries:
-                       faces_all=["阿公", "媽媽"] → photos with both.
+                       faces_all=["Grandpa", "Mom"] → photos with both.
         year:          EXIF year (e.g. 2023).
         month:         EXIF month (1-12).
         location:      Substring match against location field.
