@@ -185,6 +185,9 @@ def can_see_photo(perms: dict, path: str, face_ids: list[str]) -> bool:
         return False
     if not face_ids:
         # no-face photo → admin only
+        # TODO(v0.3+): support per-group "public_paths" or "allow_no_face" so
+        # landscape / food shots in approved dirs can also reach viewers
+        # (e.g. share /Pictures/Travel/2024 with everyone, no face required).
         return False
     # photo has faces but none in allowed_faces; path not blocked
     return False  # 嚴格私有：未授權的人臉照片不顯示

@@ -43,6 +43,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 mcp = FastMCP("local-album")
 
+# TODO(v0.3+): apply the face-naming-server permission model here too.
+#   Currently MCP runs over stdio and is implicitly admin (you, locally).
+#   If we ever expose MCP over the network (or want family members to query
+#   via their own MCP client), each tool should:
+#     1. Read an auth token from env / config
+#     2. Resolve it to a user via _auth.load_users()
+#     3. Filter results with _auth.get_user_perms + can_see_photo —
+#        identical to face_naming_server's _can_see_image / _can_see_cluster
+#   For now, all tools return unfiltered results.
+
 
 def _load_index() -> PhotoIndex:
     """Open the on-disk index. PhotoIndex.__init__ loads it lazily; we

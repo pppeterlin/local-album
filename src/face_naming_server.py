@@ -258,6 +258,12 @@ class Handler(SimpleHTTPRequestHandler):
             self.wfile.write(b'{"ok":true}')
             return
 
+        # TODO(v0.3+): /api/me/password — let logged-in users change their own
+        # password without needing admin / CLI access. Body: {old, new}.
+        # Verify old via _auth.verify_password against load_users()[user],
+        # update password_hash via _auth.hash_password, save_users.
+        # UI side: add a small "改密碼" link in the userbar.
+
         # everything else is admin-only (mutations)
         if not self._user():
             self.send_error(401, "login required"); return
@@ -1743,6 +1749,12 @@ def main():
         print("=" * 60)
         return
 
+    # TODO(v0.3+): HTTPS / external access
+    #   - LAN HTTP is fine for家用; to expose externally use Tailscale Serve
+    #     (`tailscale serve --bg http://localhost:8765`) for automatic TLS +
+    #     identity, or Cloudflare Tunnel.
+    #   - If we ever bind directly to a public interface, swap HTTPServer for
+    #     ssl-wrapped server and read certs from METADATA_DIR/auth/{cert,key}.pem.
     server = HTTPServer((bind_host, port), Handler)
     visible = "127.0.0.1" if bind_host == "127.0.0.1" else "<LAN ip>"
     print(f"人臉命名伺服器 v5：http://{visible}:{port}   (bind {bind_host})")
