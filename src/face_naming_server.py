@@ -1424,6 +1424,27 @@ body.admin .admin-only.actions{display:flex}
 .pager input{width:56px;padding:6px;text-align:center;background:#222;color:#fff;border:1px solid #333;border-radius:6px}
 .pager .info{color:#888;font-size:13px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px}
+/* viewer-only tile mode: 大頭像 + 名字，整塊可點 */
+body:not(.admin) .grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
+body:not(.admin) .tile{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:14px;padding:14px 10px;cursor:pointer;text-align:center;transition:transform .15s,border-color .15s;user-select:none;-webkit-tap-highlight-color:transparent}
+body:not(.admin) .tile:hover{transform:translateY(-2px);border-color:#4fc3f7}
+body:not(.admin) .tile:active{transform:scale(.97)}
+body:not(.admin) .tile .avatar{width:100%;aspect-ratio:1;border-radius:50%;object-fit:cover;background:#000;display:block;margin:0 auto 10px;border:2px solid #2a2a2a}
+body:not(.admin) .tile:hover .avatar{border-color:#4fc3f7}
+body:not(.admin) .tile .tname{font-size:15px;color:#e0e0e0;font-weight:500;line-height:1.3;word-break:break-word}
+body:not(.admin) .tile .tcount{color:#666;font-size:12px;margin-top:3px}
+@media (max-width:480px){
+  body:not(.admin) .grid{grid-template-columns:repeat(2,1fr);gap:10px}
+  body:not(.admin) .tile{padding:10px 8px}
+  body:not(.admin) .tile .tname{font-size:14px}
+}
+@media (min-width:481px) and (max-width:768px){
+  body:not(.admin) .grid{grid-template-columns:repeat(3,1fr)}
+}
+/* viewer 也要能蓋掉桌面 1fr 強制：因為 600px @media 把 grid 強制成 1fr */
+@media (max-width:600px){
+  body:not(.admin) .grid{grid-template-columns:repeat(2,1fr) !important}
+}
 .list{display:flex;flex-direction:column;gap:6px}
 .list-row{display:grid;grid-template-columns:48px 90px 1fr 80px auto;align-items:center;gap:14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:8px 14px}
 .list-row:hover{border-color:#444}
@@ -1530,18 +1551,18 @@ body.admin .admin-only.actions{display:flex}
   </div>
 </div>
 
-<h1>👥 人臉命名工具</h1>
-<div class="subtitle" id="subtitle"></div>
+<h1 id="mainTitle">👥 家庭相簿</h1>
+<div class="subtitle admin-only" id="subtitle"></div>
 
-<div class="toolbar">
+<div class="toolbar admin-only">
   <button class="active" data-filter="all" onclick="setFilter('all')">全部</button>
-  <button class="admin-only" data-filter="unnamed" onclick="setFilter('unnamed')">未命名</button>
+  <button data-filter="unnamed" onclick="setFilter('unnamed')">未命名</button>
   <button data-filter="named" onclick="setFilter('named')">已命名</button>
-  <button class="admin-only" data-filter="skipped" onclick="setFilter('skipped')">已略過</button>
+  <button data-filter="skipped" onclick="setFilter('skipped')">已略過</button>
   <button id="viewToggle" onclick="toggleView()" style="display:none;margin-left:14px">📋 清單模式</button>
 </div>
 
-<div class="stats" id="stats"></div>
+<div class="stats admin-only" id="stats"></div>
 
 <div class="pager" id="pagerTop"></div>
 <div class="grid" id="grid"></div>
@@ -1769,6 +1790,16 @@ function toggleView(){
 
 function renderCard(c){
   const fid = c.id;
+  // viewer：簡化成大頭像 + 名字的 tile，整塊可點 → openExpand
+  if(!window.IS_ADMIN){
+    const label = c.name || fid;
+    return `
+      <div class="tile" onclick="openExpand('${fid}')" role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' ')openExpand('${fid}')">
+        <img class="avatar" src="/thumb/${fid}.jpg?v=${c.thumb_v||0}" alt="${label.replace(/"/g,'&quot;')}" loading="lazy" onerror="this.style.visibility='hidden'">
+        <div class="tname">${label}</div>
+      </div>`;
+  }
   const isNamed = !!c.name;
   const isSkipped = !!c.skipped;
   const cls = 'card' + (isNamed?' named':'') + (isSkipped?' skipped':'');
@@ -1891,9 +1922,15 @@ function renderExpandBody(){
   const fid = c.id;
   const inSelect = selectMode === fid;
 
-  document.getElementById('expandTitle').textContent = c.name ? `${c.name}  (${fid})` : fid;
+  // viewer 只顯示名字（不露 face_id），admin 則同時顯示 ID 方便除錯
+  document.getElementById('expandTitle').textContent =
+    window.IS_ADMIN ? (c.name ? `${c.name}  (${fid})` : fid)
+                    : (c.name || '');
+  // viewer 不顯示「(原 N)」避免暴露被擋掉的照片數
   document.getElementById('expandMeta').textContent =
-    `${c.count} 張${c.count!==c.original_count?' (原 '+c.original_count+')':''}`;
+    window.IS_ADMIN && c.count !== c.original_count
+      ? `${c.count} 張 (原 ${c.original_count})`
+      : `${c.count} 張`;
 
   // 套 filter
   const allItems = openExpandMeta.images || [];
