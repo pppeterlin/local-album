@@ -1,6 +1,6 @@
 [project]
 name = "local-photo-labeler"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local-first photo labeling pipeline: CLIP indexing, smart sampling, OpenAI-compatible Vision API labeling, face clustering, and unified search."
 readme = "README.md"
 requires-python = ">=3.11"
