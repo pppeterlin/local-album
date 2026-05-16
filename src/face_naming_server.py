@@ -876,8 +876,12 @@ class Handler(SimpleHTTPRequestHandler):
 
         active = sorted([enrich(p) for p in target["images"]],
                         key=lambda x: x["ts"], reverse=True)
-        removed = sorted([enrich(p) for p in target.get("removed", [])],
-                         key=lambda x: x["ts"], reverse=True)
+        # viewer 不需要也不該看到「已移除」清單（避免路徑洩漏）
+        if self._perms()["is_admin"]:
+            removed = sorted([enrich(p) for p in target.get("removed", [])],
+                             key=lambda x: x["ts"], reverse=True)
+        else:
+            removed = []
         return {"id": fid, "images": active, "removed": removed}
 
     # ---- thumb crop helper ----
@@ -2024,7 +2028,8 @@ function renderExpandBody(){
     </div>`;
   }).join('');
 
-  const removed = openExpandMeta.removed || [];
+  // viewer 不顯示「已移除」區段（管理用，與一般瀏覽無關）
+  const removed = window.IS_ADMIN ? (openExpandMeta.removed || []) : [];
   let removedSection = '';
   if(removed.length > 0){
     const collapsed = removedSectionCollapsed;
