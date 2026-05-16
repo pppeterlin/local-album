@@ -55,10 +55,22 @@ def cmd_user_add(args):
     users[args.username] = {
         "password_hash": hash_password(args.password),
         "role": args.role,
+        "identity": (args.identity or "").strip(),
         "groups": _split_csv(args.groups),
     }
     save_users(users)
-    print(f"✓ user '{args.username}' added (role={args.role}, groups={users[args.username]['groups']})")
+    print(f"✓ user '{args.username}' added (role={args.role}, identity={users[args.username]['identity'] or '訪客'}, groups={users[args.username]['groups']})")
+    return 0
+
+
+def cmd_user_set_identity(args):
+    users = load_users()
+    if args.username not in users:
+        print(f"no such user: {args.username}", file=sys.stderr)
+        return 1
+    users[args.username]["identity"] = (args.identity or "").strip()
+    save_users(users)
+    print(f"✓ identity for '{args.username}': {users[args.username]['identity'] or '訪客'}")
     return 0
 
 
@@ -90,7 +102,8 @@ def cmd_user_list(_):
         print("(no users; use user-add to create one)")
         return 0
     for name, u in sorted(users.items()):
-        print(f"  {name:15} role={u.get('role','viewer'):7} groups={u.get('groups', [])}")
+        ident = u.get("identity") or "訪客"
+        print(f"  {name:15} role={u.get('role','viewer'):7} identity={ident:18} groups={u.get('groups', [])}")
     return 0
 
 
@@ -152,6 +165,7 @@ def main():
     ua.add_argument("username")
     ua.add_argument("--role", default="viewer", choices=["admin", "viewer"])
     ua.add_argument("--password", required=True)
+    ua.add_argument("--identity", default="", help="face_id this user IS (本人); empty = 訪客")
     ua.add_argument("--groups", help="csv of group names")
     ua.set_defaults(func=cmd_user_add)
 
@@ -162,6 +176,10 @@ def main():
     usg = sub.add_parser("user-set-groups", help="replace user's group list")
     usg.add_argument("username"); usg.add_argument("--groups", required=True, help="csv")
     usg.set_defaults(func=cmd_user_set_groups)
+
+    usi = sub.add_parser("user-set-identity", help="set user's identity face_id (empty = 訪客)")
+    usi.add_argument("username"); usi.add_argument("--identity", default="", help="face_id, or empty for 訪客")
+    usi.set_defaults(func=cmd_user_set_identity)
 
     sub.add_parser("user-list").set_defaults(func=cmd_user_list)
 

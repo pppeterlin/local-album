@@ -99,6 +99,344 @@ def _resolve_target(merges, fid):
     return fid
 
 
+ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理 · 人臉命名工具</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#111;color:#e0e0e0;padding:20px;max-width:1100px;margin:0 auto}
+a{color:#4fc3f7;text-decoration:none}
+.userbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;color:#888;font-size:13px}
+.userbar .who{color:#4fc3f7}
+.userbar a,.userbar button{padding:6px 12px;background:#222;color:#888;border:1px solid #333;border-radius:6px;font-size:12px;cursor:pointer;text-decoration:none;margin-left:6px}
+.userbar a:hover,.userbar button:hover{background:#2a2a2a;color:#ccc}
+h1{font-size:22px;color:#4fc3f7;margin-bottom:14px}
+.tabs{display:flex;gap:6px;margin-bottom:18px;border-bottom:1px solid #333}
+.tabs button{padding:10px 18px;background:none;border:none;color:#888;font-size:14px;cursor:pointer;border-bottom:2px solid transparent}
+.tabs button.active{color:#4fc3f7;border-color:#4fc3f7}
+.panel{display:none}
+.panel.active{display:block}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;padding:16px;margin-bottom:14px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.row > *{flex:0 0 auto}
+.row label{color:#999;font-size:12px}
+input[type=text],input[type=password],select{background:#222;color:#fff;border:1px solid #333;border-radius:5px;padding:7px 10px;font-size:13px}
+input:focus,select:focus{border-color:#4fc3f7;outline:none}
+button.primary{background:#4fc3f7;color:#000;border:none;padding:7px 14px;border-radius:5px;font-weight:600;cursor:pointer;font-size:13px}
+button.primary:hover{background:#3fb3e7}
+button.danger{background:#5a2828;color:#ff8a8a;border:1px solid #6a3838;padding:6px 10px;border-radius:5px;cursor:pointer;font-size:12px}
+button.danger:hover{background:#6a3030}
+button.ghost{background:#222;color:#999;border:1px solid #333;padding:6px 10px;border-radius:5px;cursor:pointer;font-size:12px}
+button.ghost:hover{background:#2a2a2a;color:#ccc}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:9px 8px;text-align:left;border-bottom:1px solid #2a2a2a;vertical-align:middle}
+th{color:#888;font-weight:500;font-size:12px}
+.tag{display:inline-block;padding:2px 8px;background:#222;color:#9cc;border-radius:10px;font-size:11px;margin:2px 3px 2px 0}
+.tag.admin{background:#3a2a4a;color:#d6c}
+.muted{color:#666;font-size:12px}
+.msg{padding:10px 14px;border-radius:6px;margin:10px 0;font-size:13px;display:none}
+.msg.ok{background:#1e3a1e;color:#9c9}
+.msg.err{background:#3a1e1e;color:#f99}
+/* group editor */
+.editor h3{font-size:14px;color:#9cf;margin:10px 0 8px}
+.face-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;max-height:380px;overflow-y:auto;padding:6px;background:#111;border:1px solid #2a2a2a;border-radius:6px}
+.face-item{position:relative;background:#1a1a1a;border:2px solid transparent;border-radius:6px;cursor:pointer;overflow:hidden;text-align:center}
+.face-item.on{border-color:#4fc3f7}
+.face-item img{width:100%;height:90px;object-fit:cover;display:block;background:#000}
+.face-item .meta{padding:4px 6px;font-size:11px;color:#bbb;line-height:1.3}
+.face-item .meta .n{color:#9cc;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.face-item.on::after{content:"✓";position:absolute;top:4px;right:6px;background:#4fc3f7;color:#000;width:18px;height:18px;border-radius:50%;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.path-list{max-height:240px;overflow-y:auto;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:6px}
+.path-row{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:4px}
+.path-row:hover{background:#1a1a1a}
+.path-row label{cursor:pointer;flex:1;font-size:12px;color:#ccc;word-break:break-all}
+.path-row .c{color:#666;font-size:11px}
+.checkbox-row{display:flex;gap:14px;flex-wrap:wrap;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:8px 10px}
+.checkbox-row label{font-size:13px;color:#ccc;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+input[type=checkbox]{accent-color:#4fc3f7}
+.section-label{font-size:12px;color:#777;margin:14px 0 6px}
+.actions-bar{display:flex;gap:8px;margin-top:12px;justify-content:flex-end}
+.group-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.group-header h2{font-size:16px;color:#4fc3f7}
+.summary{color:#888;font-size:12px;margin-bottom:8px}
+</style>
+</head><body>
+<div class="userbar">
+  <div>👤 <span class="who">__USER__</span> <span style="color:#666;font-size:11px">(admin)</span></div>
+  <div>
+    <a href="/">← 回相簿</a>
+    <button onclick="logout()">登出</button>
+  </div>
+</div>
+
+<h1>⚙️ 管理</h1>
+<div class="msg" id="msg"></div>
+
+<div class="tabs">
+  <button class="active" data-tab="users" onclick="switchTab('users')">使用者</button>
+  <button data-tab="groups" onclick="switchTab('groups')">群組</button>
+</div>
+
+<!-- USERS -->
+<div class="panel active" id="panel-users">
+  <div class="card">
+    <h3 style="font-size:14px;color:#9cf;margin-bottom:10px">新增使用者</h3>
+    <div class="row">
+      <input id="nu-name" type="text" placeholder="使用者名稱" autocomplete="off">
+      <input id="nu-pw" type="password" placeholder="密碼" autocomplete="new-password">
+      <label>權限 <select id="nu-role">
+        <option value="viewer">viewer</option>
+        <option value="admin">admin</option>
+      </select></label>
+      <button class="primary" onclick="createUser()">新增</button>
+    </div>
+    <div class="section-label">身份（這個使用者本人是誰？本人照片會自動可見，且不受群組黑名單限制）</div>
+    <select id="nu-identity" style="min-width:240px"></select>
+    <div class="section-label">群組（viewer 才有意義；群組可多個使用者共用）</div>
+    <div class="checkbox-row" id="nu-groups"></div>
+  </div>
+
+  <div class="card">
+    <table id="users-table"><thead>
+      <tr><th>名稱</th><th>權限</th><th>身份</th><th>群組</th><th style="text-align:right">動作</th></tr>
+    </thead><tbody></tbody></table>
+  </div>
+</div>
+
+<!-- GROUPS -->
+<div class="panel" id="panel-groups">
+  <div class="card">
+    <h3 style="font-size:14px;color:#9cf;margin-bottom:10px">新增群組</h3>
+    <div class="row">
+      <input id="ng-name" type="text" placeholder="群組名稱（如 family）" autocomplete="off">
+      <button class="primary" onclick="createGroup()">新增</button>
+    </div>
+  </div>
+  <div id="groups-list"></div>
+</div>
+
+<script>
+let USERS=[], GROUPS=[], FACES=[], PATHS=[];
+const $ = (id) => document.getElementById(id);
+
+function showMsg(text, ok){
+  const m = $('msg');
+  m.textContent = text;
+  m.className = 'msg ' + (ok ? 'ok' : 'err');
+  m.style.display = 'block';
+  setTimeout(()=>{ m.style.display='none'; }, 3500);
+}
+function api(method, url, body){
+  const opts = {method, headers:{'Content-Type':'application/json'}};
+  if(body!==undefined) opts.body = JSON.stringify(body);
+  return fetch(url, opts).then(r=>r.json());
+}
+function logout(){ fetch('/api/logout',{method:'POST'}).then(()=>location.href='/login'); }
+
+function switchTab(t){
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===t));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active', p.id==='panel-'+t));
+  if(t==='groups'){ renderGroups(); }
+}
+
+// ---- USERS ----
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"})[c]); }
+
+function renderGroupCheckboxes(container, selected){
+  const sel = new Set(selected||[]);
+  container.innerHTML = GROUPS.length
+    ? GROUPS.map(g=>`<label><input type="checkbox" value="${escapeHtml(g.name)}" ${sel.has(g.name)?'checked':''}>${escapeHtml(g.name)}</label>`).join('')
+    : '<span class="muted">（尚未建立群組，先到「群組」分頁新增）</span>';
+}
+
+function renderIdentityOptions(sel, selected){
+  // 訪客 + 所有命名的 face cluster
+  const cur = selected || '';
+  sel.innerHTML = '<option value="">訪客（無預設可見照片）</option>'
+    + FACES.map(f=>`<option value="${escapeHtml(f.id)}" ${cur===f.id?'selected':''}>${escapeHtml(f.name)} · ${f.count} 張</option>`).join('');
+}
+
+function identityLabel(fid){
+  if(!fid) return '<span class="muted">訪客</span>';
+  const f = FACES.find(x=>x.id===fid);
+  return f ? `<span class="tag">${escapeHtml(f.name)}</span>` : `<span class="tag muted">${escapeHtml(fid)}（已失效）</span>`;
+}
+
+function renderUsers(){
+  const tb = document.querySelector('#users-table tbody');
+  tb.innerHTML = USERS.map(u=>{
+    const isAdmin = u.role==='admin';
+    const groupTags = (u.groups||[]).map(g=>`<span class="tag">${escapeHtml(g)}</span>`).join('') || '<span class="muted">—</span>';
+    return `<tr data-name="${escapeHtml(u.username)}">
+      <td><b>${escapeHtml(u.username)}</b></td>
+      <td><span class="tag ${isAdmin?'admin':''}">${u.role}</span></td>
+      <td>${identityLabel(u.identity)}</td>
+      <td>${groupTags}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="ghost" onclick="editUser('${escapeHtml(u.username)}')">編輯</button>
+        <button class="danger" onclick="deleteUser('${escapeHtml(u.username)}')">刪除</button>
+      </td>
+    </tr>`;
+  }).join('');
+  renderGroupCheckboxes($('nu-groups'), []);
+  renderIdentityOptions($('nu-identity'), '');
+}
+
+function createUser(){
+  const username = $('nu-name').value.trim();
+  const password = $('nu-pw').value;
+  const role = $('nu-role').value;
+  const identity = $('nu-identity').value;
+  const groups = Array.from($('nu-groups').querySelectorAll('input:checked')).map(x=>x.value);
+  if(!username || !password){ showMsg('username 與密碼必填', false); return; }
+  api('POST','/api/admin/users',{username,password,role,identity,groups}).then(r=>{
+    if(r.ok){ showMsg('✓ 已新增 '+username, true); $('nu-name').value=''; $('nu-pw').value=''; loadAll(); }
+    else showMsg(r.error||'新增失敗', false);
+  });
+}
+
+function editUser(name){
+  const u = USERS.find(x=>x.username===name);
+  if(!u) return;
+  const tr = document.querySelector(`#users-table tr[data-name="${CSS.escape(name)}"]`);
+  const groupChecks = GROUPS.map(g=>`<label style="display:inline-flex;gap:3px;align-items:center;margin-right:10px;font-size:12px"><input type="checkbox" value="${escapeHtml(g.name)}" ${u.groups.includes(g.name)?'checked':''}>${escapeHtml(g.name)}</label>`).join('') || '<span class="muted">（無群組）</span>';
+  const idOpts = '<option value="">訪客（無預設可見照片）</option>'
+    + FACES.map(f=>`<option value="${escapeHtml(f.id)}" ${u.identity===f.id?'selected':''}>${escapeHtml(f.name)} · ${f.count} 張</option>`).join('');
+  tr.innerHTML = `<td colspan="5">
+    <div class="row" style="margin-bottom:8px">
+      <b>${escapeHtml(name)}</b>
+      <label>權限 <select id="ed-role-${escapeHtml(name)}">
+        <option value="viewer" ${u.role==='viewer'?'selected':''}>viewer</option>
+        <option value="admin" ${u.role==='admin'?'selected':''}>admin</option>
+      </select></label>
+      <input type="password" id="ed-pw-${escapeHtml(name)}" placeholder="新密碼（留空則不改）" autocomplete="new-password">
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <label>身份 <select id="ed-id-${escapeHtml(name)}" style="min-width:240px">${idOpts}</select></label>
+    </div>
+    <div style="margin-bottom:8px">${groupChecks}</div>
+    <div style="text-align:right">
+      <button class="ghost" onclick="loadUsers()">取消</button>
+      <button class="primary" onclick="saveUser('${escapeHtml(name)}')">儲存</button>
+    </div>
+  </td>`;
+}
+
+function saveUser(name){
+  const role = $('ed-role-'+name).value;
+  const identity = $('ed-id-'+name).value;
+  const pw = $('ed-pw-'+name).value;
+  const tr = document.querySelector(`#users-table tr[data-name="${CSS.escape(name)}"]`);
+  const groups = Array.from(tr.querySelectorAll('input[type=checkbox]:checked')).map(x=>x.value);
+  const body = {action:'update', role, identity, groups};
+  if(pw) body.password = pw;
+  api('POST','/api/admin/users/'+encodeURIComponent(name), body).then(r=>{
+    if(r.ok){ showMsg('✓ 已更新 '+name, true); loadUsers(); }
+    else showMsg(r.error||'儲存失敗', false);
+  });
+}
+
+function deleteUser(name){
+  if(!confirm('確定刪除使用者「'+name+'」？')) return;
+  api('POST','/api/admin/users/'+encodeURIComponent(name),{action:'delete'}).then(r=>{
+    if(r.ok){ showMsg('✓ 已刪除 '+name, true); loadUsers(); }
+    else showMsg(r.error||'刪除失敗', false);
+  });
+}
+
+// ---- GROUPS ----
+function renderGroups(){
+  const wrap = $('groups-list');
+  if(GROUPS.length===0){ wrap.innerHTML='<div class="card muted">尚未建立群組。</div>'; return; }
+  wrap.innerHTML = GROUPS.map(g=>{
+    const allowed = new Set(g.allowed_faces||[]);
+    const blocked = new Set(g.blocked_paths||[]);
+    const faceGrid = FACES.map(f=>{
+      const on = allowed.has(f.id);
+      return `<div class="face-item ${on?'on':''}" data-fid="${escapeHtml(f.id)}" onclick="toggleFace(this)">
+        <img src="/thumb/${escapeHtml(f.id)}.jpg?v=${f.thumb_ver}" loading="lazy">
+        <div class="meta"><span class="n">${escapeHtml(f.name)}</span><span style="color:#666">${f.count}</span></div>
+      </div>`;
+    }).join('') || '<span class="muted">（尚無命名的人臉群組）</span>';
+    const pathRows = PATHS.map(p=>{
+      const id = 'p-'+g.name+'-'+btoa(unescape(encodeURIComponent(p.path))).replace(/=/g,'');
+      return `<div class="path-row">
+        <input type="checkbox" id="${id}" value="${escapeHtml(p.path)}" ${blocked.has(p.path)?'checked':''}>
+        <label for="${id}">${escapeHtml(p.path)}<span class="c"> · ${p.count} 張</span></label>
+      </div>`;
+    }).join('') || '<span class="muted">（沒有可選路徑）</span>';
+    return `<div class="card editor" data-group="${escapeHtml(g.name)}">
+      <div class="group-header">
+        <h2>${escapeHtml(g.name)}</h2>
+        <button class="danger" onclick="deleteGroup('${escapeHtml(g.name)}')">刪除群組</button>
+      </div>
+      <div class="summary">允許看到 <b>${g.allowed_faces.length}</b> 個人臉群組 · 封鎖 <b>${g.blocked_paths.length}</b> 個路徑前綴</div>
+
+      <h3>可看到的人臉群組（allowed_faces）</h3>
+      <div class="face-grid">${faceGrid}</div>
+
+      <h3>封鎖路徑前綴（blocked_paths）</h3>
+      <div class="path-list">${pathRows}</div>
+
+      <div class="actions-bar">
+        <button class="primary" onclick="saveGroup('${escapeHtml(g.name)}')">儲存</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleFace(el){ el.classList.toggle('on'); }
+
+function createGroup(){
+  const name = $('ng-name').value.trim();
+  if(!name){ showMsg('群組名稱必填', false); return; }
+  api('POST','/api/admin/groups/'+encodeURIComponent(name),{action:'upsert',allowed_faces:[],blocked_paths:[]}).then(r=>{
+    if(r.ok){ showMsg('✓ 已新增群組 '+name, true); $('ng-name').value=''; loadAll(); }
+    else showMsg(r.error||'新增失敗', false);
+  });
+}
+
+function saveGroup(name){
+  const card = document.querySelector(`.card[data-group="${CSS.escape(name)}"]`);
+  const allowed_faces = Array.from(card.querySelectorAll('.face-item.on')).map(x=>x.dataset.fid);
+  const blocked_paths = Array.from(card.querySelectorAll('.path-list input:checked')).map(x=>x.value);
+  api('POST','/api/admin/groups/'+encodeURIComponent(name),{action:'upsert',allowed_faces,blocked_paths}).then(r=>{
+    if(r.ok){ showMsg('✓ 已更新群組 '+name, true); loadAll(); }
+    else showMsg(r.error||'儲存失敗', false);
+  });
+}
+
+function deleteGroup(name){
+  if(!confirm('確定刪除群組「'+name+'」？\\n所有使用者對這個群組的引用也會被移除。')) return;
+  api('POST','/api/admin/groups/'+encodeURIComponent(name),{action:'delete'}).then(r=>{
+    if(r.ok){ showMsg('✓ 已刪除群組 '+name, true); loadAll(); }
+    else showMsg(r.error||'刪除失敗', false);
+  });
+}
+
+// ---- bootstrap ----
+function loadUsers(){
+  return fetch('/api/admin/users').then(r=>r.json()).then(d=>{ USERS=d; renderUsers(); });
+}
+function loadAll(){
+  return Promise.all([
+    fetch('/api/admin/users').then(r=>r.json()),
+    fetch('/api/admin/groups').then(r=>r.json()),
+    fetch('/api/admin/faces').then(r=>r.json()),
+    fetch('/api/admin/paths').then(r=>r.json()),
+  ]).then(([u,g,f,p])=>{
+    USERS=u; GROUPS=g; FACES=f; PATHS=p;
+    renderUsers();
+    if(document.querySelector('.tabs button.active').dataset.tab==='groups') renderGroups();
+  });
+}
+loadAll();
+</script>
+</body></html>"""
+
+
 class Handler(SimpleHTTPRequestHandler):
     # --- auth helpers --------------------------------------------------
     def _user(self):
@@ -177,6 +515,27 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path in ("/", "/index.html"):
             self.html(self.generate_html())
+
+        elif path in ("/admin", "/admin/"):
+            if not self._require_admin():
+                return
+            self.html(self.generate_admin_html())
+
+        elif path == "/api/admin/users":
+            if not self._require_admin(): return
+            self.json_response(self._admin_list_users())
+
+        elif path == "/api/admin/groups":
+            if not self._require_admin(): return
+            self.json_response(self._admin_list_groups())
+
+        elif path == "/api/admin/faces":
+            if not self._require_admin(): return
+            self.json_response(self._admin_list_faces())
+
+        elif path == "/api/admin/paths":
+            if not self._require_admin(): return
+            self.json_response(self._admin_list_paths())
 
         elif path.startswith("/image/"):
             img = self.fix_path(path[7:])
@@ -385,6 +744,20 @@ class Handler(SimpleHTTPRequestHandler):
             result = self._set_custom_thumb(fid, img_path)
             self.json_response(result)
 
+        elif path == "/api/admin/users":
+            # body: {username, password, role, groups[]}
+            self.json_response(self._admin_create_user(body))
+
+        elif path.startswith("/api/admin/users/"):
+            # body: {action: "update"|"delete", role?, groups?, password?}
+            uname = unquote(path[len("/api/admin/users/"):])
+            self.json_response(self._admin_modify_user(uname, body))
+
+        elif path.startswith("/api/admin/groups/"):
+            # body: {action: "upsert"|"delete", allowed_faces?, blocked_paths?}
+            gname = unquote(path[len("/api/admin/groups/"):])
+            self.json_response(self._admin_modify_group(gname, body))
+
         else:
             self.send_error(404)
 
@@ -555,6 +928,187 @@ class Handler(SimpleHTTPRequestHandler):
         save_json(THUMB_OVERRIDES_FILE, overrides)
         return {"ok": True, "thumb_path": str(out_path), "image_path": img_path}
 
+    # ---- admin: users / groups / visibility helpers ----
+
+    @staticmethod
+    def _admin_list_users():
+        users = _auth.load_users()
+        return [
+            {
+                "username": n,
+                "role": u.get("role", "viewer"),
+                "identity": u.get("identity", ""),
+                "groups": list(u.get("groups", [])),
+            }
+            for n, u in sorted(users.items())
+        ]
+
+    @staticmethod
+    def _admin_list_groups():
+        groups = _auth.load_groups()
+        return [
+            {
+                "name": n,
+                "allowed_faces": list(g.get("allowed_faces", [])),
+                "blocked_paths": list(g.get("blocked_paths", [])),
+            }
+            for n, g in sorted(groups.items())
+        ]
+
+    @staticmethod
+    def _admin_list_faces():
+        """已命名的 cluster 清單（admin 才會用到，給群組編輯選 allowed_faces）。"""
+        faces = load_faces() or {}
+        names = load_names()
+        merges = load_merges()
+        clusters = faces.get("clusters", {}) or {}
+        # 反查每個 final target 的圖片數（含被合併進來的 source）
+        merge_back: dict[str, list[str]] = defaultdict(list)
+        for src in list(merges.keys()):
+            final = _resolve_target(merges, src)
+            if final != src:
+                merge_back[final].append(src)
+        result = []
+        for fid, info in clusters.items():
+            if fid in merges:
+                continue  # 被合併走的不獨立顯示
+            name = names.get(fid, "")
+            if not name:
+                continue  # 只列出已命名的，admin 才知道誰是誰
+            count = len(info.get("images", []) or [])
+            for s in merge_back.get(fid, []):
+                count += len(clusters.get(s, {}).get("images", []) or [])
+            thumb_file = THUMBS_DIR / f"{fid}.jpg"
+            thumb_ver = int(thumb_file.stat().st_mtime) if thumb_file.exists() else 0
+            result.append({"id": fid, "name": name, "count": count, "thumb_ver": thumb_ver})
+        result.sort(key=lambda r: (-r["count"], r["name"]))
+        return result
+
+    @staticmethod
+    def _admin_list_paths():
+        """列出 metadata 中曾索引到的 top-level 目錄前綴，供 blocked_paths 勾選。
+
+        策略：掃 face_clusters.json 內所有 image 路徑，取前 N 段路徑作為候選。
+        """
+        faces = load_faces() or {}
+        clusters = faces.get("clusters", {}) or {}
+        # 只列「照片庫根目錄下一層」的資料夾，作為封鎖路徑候選。
+        # 例：/Volumes/970EvoP2T/Chun/Pictures/8_Xiaomi_Mi13Ultra/...
+        #     → 取 /Volumes/970EvoP2T/Chun/Pictures/8_Xiaomi_Mi13Ultra/
+        # split('/') 後 index 5 就是 Pictures 下一層的資料夾名。
+        counts: dict[str, int] = defaultdict(int)
+        for info in clusters.values():
+            for p in info.get("images", []) or []:
+                if _is_skip_path(p):
+                    continue
+                parts = p.split("/")
+                if len(parts) >= 7:  # 至少要有一個檔案在這層下面
+                    top = "/".join(parts[:6]) + "/"
+                    counts[top] += 1
+        return [
+            {"path": p, "count": c}
+            for p, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            if c > 0
+        ]
+
+    def _admin_create_user(self, body: dict):
+        username = (body.get("username") or "").strip()
+        password = body.get("password") or ""
+        role = body.get("role") or "viewer"
+        groups = body.get("groups") or []
+        identity = (body.get("identity") or "").strip()
+        if not username or not password:
+            return {"ok": False, "error": "username 與 password 必填"}
+        if role not in ("admin", "viewer"):
+            return {"ok": False, "error": "權限必須是 admin 或 viewer"}
+        if not isinstance(groups, list):
+            return {"ok": False, "error": "groups 必須是陣列"}
+        users = _auth.load_users()
+        if username in users:
+            return {"ok": False, "error": f"使用者 '{username}' 已存在"}
+        users[username] = {
+            "password_hash": _auth.hash_password(password),
+            "role": role,
+            "identity": identity,
+            "groups": [g for g in groups if isinstance(g, str) and g.strip()],
+        }
+        _auth.save_users(users)
+        return {"ok": True, "username": username}
+
+    def _admin_modify_user(self, username: str, body: dict):
+        action = body.get("action") or "update"
+        users = _auth.load_users()
+        if username not in users:
+            return {"ok": False, "error": f"沒有使用者 '{username}'"}
+        if action == "delete":
+            # 防呆：不能刪除自己（避免把所有 admin 鎖在外面的常見情境）
+            if username == self._user():
+                return {"ok": False, "error": "不能刪除自己"}
+            # 若是最後一個 admin，禁止
+            target = users[username]
+            if target.get("role") == "admin":
+                admins = [n for n, u in users.items() if u.get("role") == "admin"]
+                if len(admins) <= 1:
+                    return {"ok": False, "error": "不能刪除最後一個 admin"}
+            del users[username]
+            _auth.save_users(users)
+            return {"ok": True}
+        # update
+        u = users[username]
+        if "role" in body:
+            new_role = body.get("role")
+            if new_role not in ("admin", "viewer"):
+                return {"ok": False, "error": "權限必須是 admin 或 viewer"}
+            # 防呆：不能把唯一 admin 降權
+            if u.get("role") == "admin" and new_role != "admin":
+                admins = [n for n, x in users.items() if x.get("role") == "admin"]
+                if len(admins) <= 1:
+                    return {"ok": False, "error": "不能降權最後一個 admin"}
+            u["role"] = new_role
+        if "groups" in body:
+            groups = body.get("groups") or []
+            if not isinstance(groups, list):
+                return {"ok": False, "error": "groups 必須是陣列"}
+            u["groups"] = [g for g in groups if isinstance(g, str) and g.strip()]
+        if "identity" in body:
+            u["identity"] = (body.get("identity") or "").strip()
+        if body.get("password"):
+            u["password_hash"] = _auth.hash_password(body["password"])
+        _auth.save_users(users)
+        return {"ok": True}
+
+    def _admin_modify_group(self, name: str, body: dict):
+        action = body.get("action") or "upsert"
+        groups = _auth.load_groups()
+        if action == "delete":
+            if name not in groups:
+                return {"ok": False, "error": f"沒有群組 '{name}'"}
+            del groups[name]
+            _auth.save_groups(groups)
+            # 順便把所有 user.groups 裡的這個名字清掉，避免懸空引用
+            users = _auth.load_users()
+            changed = False
+            for u in users.values():
+                if name in u.get("groups", []):
+                    u["groups"] = [g for g in u["groups"] if g != name]
+                    changed = True
+            if changed:
+                _auth.save_users(users)
+            return {"ok": True}
+        # upsert
+        if not name or not name.strip():
+            return {"ok": False, "error": "群組名不能為空"}
+        allowed_faces = body.get("allowed_faces") or []
+        blocked_paths = body.get("blocked_paths") or []
+        if not isinstance(allowed_faces, list) or not isinstance(blocked_paths, list):
+            return {"ok": False, "error": "allowed_faces / blocked_paths 必須是陣列"}
+        groups[name] = {
+            "allowed_faces": [x for x in allowed_faces if isinstance(x, str) and x.strip()],
+            "blocked_paths": [x for x in blocked_paths if isinstance(x, str) and x.strip()],
+        }
+        _auth.save_groups(groups)
+        return {"ok": True}
+
     # ---- data assembly ----
 
     def get_all_sorted(self, flt):
@@ -684,16 +1238,54 @@ class Handler(SimpleHTTPRequestHandler):
             result = [r for r in result if r["skipped"]]
         # "all" → 全留
 
-        # 權限：非 admin 只看 allowed_faces 對應 cluster，且 images 也要過濾
+        # 權限：非 admin 要過 cluster + per-image 雙層過濾
         perms = self._perms()
         if not perms["is_admin"]:
+            # 1) cluster：只留 allowed_faces 對應的（含本人 identity，已在 allowed_faces 裡）
             result = [r for r in result if r["id"] in perms["allowed_faces"]]
-            # 每個 cluster 內：路徑被擋且該照片未被 allowed_faces 解鎖 → 移除
-            # （因為這個 cluster 本身就在 allowed_faces，所以裡面所有照片都會被解鎖。
-            #  blocked_paths 只在「user 不該看到那張」的情境下適用，這裡其實不會擋。
-            #  保留 hook 給未來：照片裡可能有其他 allowed_faces 之外的人臉混入。
-            #  目前 cluster 已通過 allowed_faces 篩選，無需逐張過濾。）
-            pass
+
+            # 2) per-image：用 _auth.can_see_photo 規則
+            #    - 本人在照片裡 → 顯示 (beats blocked_paths)
+            #    - 路徑被擋 → 隱藏
+            #    - 群組 allowed_faces 與照片人臉有交集 → 顯示
+            # 預先建 path -> 已解析的 face_id 清單（含 merges + moves）
+            img_to_faces: dict[str, list[str]] = {}
+            for img_path, recs in (faces.get("images") or {}).items():
+                img_to_faces[img_path] = [
+                    _resolve_target(merges, r.get("face_id", "")) for r in recs
+                ]
+            # 套用 moves：from_face → to_face per image
+            moves_per_path: dict[str, list[tuple[str, str]]] = defaultdict(list)
+            for m in moves:
+                p = m.get("path")
+                if not p:
+                    continue
+                f_final = _resolve_target(merges, m.get("from", ""))
+                t_final = _resolve_target(merges, m.get("to", ""))
+                moves_per_path[p].append((f_final, t_final))
+
+            def _effective_faces(path: str) -> list[str]:
+                base = list(img_to_faces.get(path, []))
+                for f_final, t_final in moves_per_path.get(path, []):
+                    base = [t_final if fid == f_final else fid for fid in base]
+                return base
+
+            filtered: list[dict] = []
+            for r in result:
+                visible_imgs = [
+                    p for p in r["images"]
+                    if _auth.can_see_photo(perms, p, _effective_faces(p))
+                ]
+                if not visible_imgs:
+                    continue
+                r["images"] = visible_imgs
+                r["count"] = len(visible_imgs)
+                r["removed"] = [
+                    p for p in r["removed"]
+                    if _auth.can_see_photo(perms, p, _effective_faces(p))
+                ]
+                filtered.append(r)
+            result = filtered
 
         # 排序：未略過在前（依 count desc）、略過在後（依 count desc）
         result.sort(key=lambda r: (r["skipped"], -r["count"]))
@@ -783,6 +1375,10 @@ function login(){
         inject = f"<script>window.CURRENT_USER='{user}';window.IS_ADMIN={is_admin};</script>"
         return self._generate_html_template().replace(
             "<!--USER_INJECT-->", inject)
+
+    def generate_admin_html(self):
+        user = self._user() or ""
+        return ADMIN_HTML_TEMPLATE.replace("__USER__", user)
 
     def _generate_html_template(self):
         return """<!DOCTYPE html>
@@ -928,7 +1524,10 @@ body.admin .admin-only.actions{display:flex}
 
 <div class="userbar">
   <div>👤 <span class="who" id="whoami"></span> <span id="role-tag" style="color:#888;font-size:11px"></span></div>
-  <button onclick="logout()">登出</button>
+  <div>
+    <a href="/admin" class="admin-only" style="padding:6px 12px;background:#222;color:#888;border:1px solid #333;border-radius:6px;font-size:12px;text-decoration:none;margin-right:6px">⚙️ 管理</a>
+    <button onclick="logout()">登出</button>
+  </div>
 </div>
 
 <h1>👥 人臉命名工具</h1>

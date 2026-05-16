@@ -6,15 +6,19 @@ Sessions: HMAC-signed cookies (stateless), 1 year expiry baked in
 payload. No DB, no server-side session table.
 
 Permission model (per photo P for user U):
-  1. admin role           → always visible
-  2. U.allowed_faces ∩ faces(P) non-empty → visible (face unlock)
-  3. P.path matches U.blocked_paths        → hidden
-  4. P has no detected faces               → hidden for non-admin
-                                            (privacy-by-default for
-                                             un-curated content)
-  5. otherwise → visible
+  1. admin role                              → always visible
+  2. U.identity ∈ faces(P)                   → visible (本人特權，beats blocked_paths)
+  3. P.path matches U.blocked_paths          → hidden
+  4. P has no detected faces                 → hidden for non-admin
+                                               (privacy-by-default for
+                                                un-curated content)
+  5. U.allowed_faces ∩ faces(P) non-empty    → visible (face unlock via 群組)
+  6. otherwise                               → hidden
 
 U.allowed_faces and U.blocked_paths are unions over U's groups.
+U.identity (optional face_id) — only this single face_id gets the
+"override blocked_paths" privilege. Other allowed_faces (from groups) do not:
+they're filtered out if the photo's path is in blocked_paths.
 """
 
 from __future__ import annotations
@@ -146,17 +150,21 @@ def save_groups(d): _save_json(GROUPS_FILE, d)
 
 def get_user_perms(username: str | None) -> dict:
     """Resolve effective perms for a user.
-    Returns: {is_admin, is_viewer, allowed_faces:set, blocked_paths:list}.
+    Returns: {is_admin, is_viewer, identity, allowed_faces:set, blocked_paths:list}.
+      - identity: single face_id (本人); ""=訪客. Has override-blocked-paths privilege.
+      - allowed_faces: union over user's groups (includes identity for cluster-list
+        purposes so the 本人 cluster is always visible).
     None / unknown user → is_viewer=False (denies everything except login).
     """
     if not username:
-        return {"is_admin": False, "is_viewer": False, "allowed_faces": set(), "blocked_paths": []}
+        return {"is_admin": False, "is_viewer": False, "identity": "", "allowed_faces": set(), "blocked_paths": []}
     users = load_users()
     u = users.get(username)
     if not u:
-        return {"is_admin": False, "is_viewer": False, "allowed_faces": set(), "blocked_paths": []}
+        return {"is_admin": False, "is_viewer": False, "identity": "", "allowed_faces": set(), "blocked_paths": []}
     if u.get("role") == "admin":
-        return {"is_admin": True, "is_viewer": True, "allowed_faces": set(), "blocked_paths": []}
+        return {"is_admin": True, "is_viewer": True, "identity": (u.get("identity") or "").strip(),
+                "allowed_faces": set(), "blocked_paths": []}
     groups = load_groups()
     allowed: set[str] = set()
     blocked: list[str] = []
@@ -167,20 +175,28 @@ def get_user_perms(username: str | None) -> dict:
         for bp in gd.get("blocked_paths", []):
             if bp not in blocked:
                 blocked.append(bp)
-    return {"is_admin": False, "is_viewer": True, "allowed_faces": allowed, "blocked_paths": blocked}
+    identity = (u.get("identity") or "").strip()
+    # 本人 cluster 一定要能看到 → 確保 identity 也在 allowed_faces（用於 cluster 篩選）
+    # 注意：blocked_paths 的 override 特權只給 identity，不給其他 allowed_faces
+    if identity:
+        allowed.add(identity)
+    return {"is_admin": False, "is_viewer": True, "identity": identity,
+            "allowed_faces": allowed, "blocked_paths": blocked}
 
 def path_blocked(path: str, blocked_paths: list[str]) -> bool:
     return any(path.startswith(bp) for bp in blocked_paths)
 
 def can_see_photo(perms: dict, path: str, face_ids: list[str]) -> bool:
-    """Decide visibility for a single photo."""
+    """Decide visibility for a single photo. See module docstring for rule order."""
     if perms["is_admin"]:
         return True
     if not perms["is_viewer"]:
         return False
-    # face unlock (overrides path block)
-    if perms["allowed_faces"].intersection(face_ids):
+    # 本人特權：identity 出現在照片裡 → 永遠可見，beats blocked_paths
+    identity = perms.get("identity") or ""
+    if identity and identity in face_ids:
         return True
+    # 路徑黑名單 → 擋
     if path_blocked(path, perms["blocked_paths"]):
         return False
     if not face_ids:
@@ -189,5 +205,7 @@ def can_see_photo(perms: dict, path: str, face_ids: list[str]) -> bool:
         # landscape / food shots in approved dirs can also reach viewers
         # (e.g. share /Pictures/Travel/2024 with everyone, no face required).
         return False
-    # photo has faces but none in allowed_faces; path not blocked
+    # 群組允許的人臉出現在照片 → 可見
+    if perms["allowed_faces"].intersection(face_ids):
+        return True
     return False  # 嚴格私有：未授權的人臉照片不顯示
