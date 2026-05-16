@@ -307,6 +307,109 @@ with your edits.
 
 ---
 
+## Multi-user access (v0.3)
+
+The face-naming server can be shared on a LAN as a family photo
+viewer. Login required for every route; each user gets their own
+filtered view of the album.
+
+### Concepts
+
+| | What | Notes |
+|---|---|---|
+| **Permission** (`role`) | `admin` or `viewer` | Admin sees everything and can curate. Viewer is read-only and only sees photos the rules let through. |
+| **Identity** (`identity`) | A face_id this user "is" | Optional. Their own face's photos are always visible — beats `blocked_paths`. Empty = 訪客 (guest), no implicit visibility. |
+| **Group** | Reusable bundle: `allowed_faces` + `blocked_paths` | A user belongs to 0..N groups; effective perms are unions. Groups are designed to be shared across users (e.g. one `family` group for everyone). |
+
+### Visibility rules (per photo `P` for user `U`)
+
+1. `U.role == admin` → visible
+2. `U.identity ∈ faces(P)` → visible (本人特權, beats blocked_paths)
+3. `P.path` matches any of `U.blocked_paths` → hidden
+4. `P` has no detected faces → hidden (privacy-by-default for un-curated content)
+5. `U.allowed_faces ∩ faces(P)` non-empty → visible
+6. otherwise → hidden
+
+The asymmetry between identity (rule 2) and group-allowed faces
+(rule 5) is intentional: *your own* photos can show up anywhere,
+but unlocking another family member's face doesn't drag along
+private albums (e.g. you share `family` with your mom, but
+`/Pictures/MyPhone/` stays hidden even if mom's face is in those
+shots — unless mom logs in as her own identity).
+
+### Admin web UI
+
+Visit `/admin` while logged in as an admin. Two tabs:
+
+- **使用者** — create / edit / delete users; pick role, identity (dropdown of named face clusters or 訪客), and group memberships.
+- **群組** — create / edit / delete groups. Group editor has a face-thumbnail grid for `allowed_faces` and a checkbox list of top-level photo directories for `blocked_paths`.
+
+Safety rails: can't delete yourself, can't demote the last admin,
+deleting a group automatically removes it from all users.
+
+### Bootstrap (first admin)
+
+The server refuses to start without an admin. Create one via CLI:
+
+```bash
+uv run python src/manage_users.py user-add chun --role admin --password 'xxx'
+```
+
+Then start the server and create the rest of the family via `/admin`.
+
+### CLI parity
+
+Every UI action has a CLI counterpart in `src/manage_users.py`:
+
+```bash
+user-add <name> --role {admin|viewer} --password '...' [--identity face_5] [--groups family,trips]
+user-set-password <name> --password '...'
+user-set-identity <name> --identity face_5    # empty = guest
+user-set-groups <name> --groups family,trips
+user-list
+user-rm <name>
+
+group-set <name> --allowed-faces face_0,face_5,... --blocked-paths /Volumes/.../Phone/,...
+group-list
+group-rm <name>
+```
+
+### Storage
+
+Auth state lives under `METADATA_DIR/auth/`:
+
+| File | Purpose |
+|---|---|
+| `users.json` | `{name: {password_hash, role, identity, groups[]}}` |
+| `groups.json` | `{name: {allowed_faces[], blocked_paths[]}}` |
+| `.session_secret` | 32-byte HMAC key for stateless session cookies (chmod 600) |
+
+Sessions are HMAC-signed cookies, 1-year expiry, no server-side
+session table. Passwords are scrypt-hashed.
+
+### Viewer experience
+
+Non-admins land on a simplified, mobile-first home: a grid of
+circular face tiles (avatar + name). Tap a tile to open the
+cluster's photo timeline. Admin chrome (filter toolbar, stats,
+"已合併 / 移入 / 移出" badges, removed-photo section) is hidden.
+
+### LAN deployment
+
+The server already binds `0.0.0.0:8765`; any device on the same
+WiFi can reach `http://<host-lan-ip>:8765/`. For external access,
+the cleanest path is **Tailscale Serve** (automatic TLS, identity
+gating):
+
+```bash
+tailscale serve --bg http://localhost:8765
+```
+
+Family members install Tailscale, join your tailnet, and the
+album works from anywhere.
+
+---
+
 ## Environment variables
 
 See [`.env.example`](.env.example). All optional except as noted:
