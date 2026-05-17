@@ -1943,21 +1943,32 @@ class Handler(SimpleHTTPRequestHandler):
         perms = self._perms()
         if not perms["is_admin"]:
             if kind == "pet":
-                # 寵物預設全公開；若 user 所屬群組有指定 allowed_pets，轉為白名單模式
+                # 寵物的可見性規則：
+                #   - 預設（allowed_pets 為空）：所有 cluster 可見；
+                #     per-image 仍受 blocked_paths 限制。
+                #   - 設了 allowed_pets（白名單模式）：只看 cluster ∈ allowed_pets，
+                #     而且這些 cluster 的照片 **解鎖 blocked_paths**
+                #     （pet unlock，類似 face identity 的特權；
+                #      admin 明確授權該 pet 就等於放行該 pet 的照片）。
                 allowed_pets = perms.get("allowed_pets") or set()
-                if allowed_pets:
+                whitelist_mode = bool(allowed_pets)
+                if whitelist_mode:
                     result = [r for r in result if r["id"] in allowed_pets]
-                # per-image 只擋 blocked_paths（沒有「無人臉自動隱藏」這條規則）
-                def _ok_pet(path):
+
+                def _ok_pet(path, cluster_id):
+                    # 白名單模式 + cluster 是被允許的 → pet unlock 解鎖路徑封鎖
+                    if whitelist_mode and cluster_id in allowed_pets:
+                        return True
                     return not _auth.path_blocked(path, perms["blocked_paths"])
+
                 filtered: list[dict] = []
                 for r in result:
-                    visible_imgs = [p for p in r["images"] if _ok_pet(p)]
+                    visible_imgs = [p for p in r["images"] if _ok_pet(p, r["id"])]
                     if not visible_imgs:
                         continue
                     r["images"] = visible_imgs
                     r["count"] = len(visible_imgs)
-                    r["removed"] = [p for p in r["removed"] if _ok_pet(p)]
+                    r["removed"] = [p for p in r["removed"] if _ok_pet(p, r["id"])]
                     filtered.append(r)
                 result = filtered
             else:
