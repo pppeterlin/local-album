@@ -517,6 +517,7 @@ function relInit(){
   // load graph + types from backend; faces come from FACES (already loaded)
   fetch('/api/admin/relationship-graph').then(r=>r.json()).then(d=>{
     relGraph = d.graph || {nodes:[], edges:[]};
+    if(!relGraph.positions) relGraph.positions = {};
     relFamilyTypes = d.family_types || [];
     relNonFamilyTypes = d.non_family_types || [];
     renderRelSidebar();
@@ -546,14 +547,21 @@ function relAddNode(fid){
   renderRelSidebar();
   if(cy){
     const f = faceById(fid);
-    cy.add({data:{id:fid, label:f?f.name:fid, thumb:`/thumb/${fid}.jpg?v=${f?f.thumb_ver:0}`}});
-    relAutoLayout();
+    // 放在目前 viewport 中央，讓使用者看得到；保留既有節點位置
+    const ext = cy.extent();
+    const cx = (ext.x1 + ext.x2) / 2;
+    const cy_ = (ext.y1 + ext.y2) / 2;
+    cy.add({group:'nodes',
+            data:{id:fid, label:f?f.name:fid, thumb:`/thumb/${fid}.jpg?v=${f?f.thumb_ver:0}`},
+            position:{x: cx, y: cy_}});
+    relGraph.positions[fid] = {x: cx, y: cy_};
   }
 }
 
 function relRemoveNode(fid){
   relGraph.nodes = relGraph.nodes.filter(n=>n!==fid);
   relGraph.edges = relGraph.edges.filter(e=>e.from!==fid && e.to!==fid);
+  if(relGraph.positions) delete relGraph.positions[fid];
   renderRelSidebar();
   if(cy){
     cy.$('#'+CSS.escape(fid)).remove();
@@ -561,10 +569,26 @@ function relRemoveNode(fid){
 }
 
 function relRenderCanvas(){
+  // 1) snapshot 現在的位置（重畫前），merge 進 relGraph.positions
+  if(cy){
+    cy.nodes().forEach(n => {
+      relGraph.positions[n.id()] = {x: n.position('x'), y: n.position('y')};
+    });
+  }
+
+  // 2) 組 elements，已知位置的節點直接帶 position（cy 會跳過 layout）
   const els = [];
+  const knownPositions = relGraph.positions || {};
+  const unknownNodes = [];
   for(const fid of relGraph.nodes){
     const f = faceById(fid);
-    els.push({group:'nodes', data:{id:fid, label:f?f.name:fid, thumb:`/thumb/${fid}.jpg?v=${f?f.thumb_ver:0}`}});
+    const node = {group:'nodes', data:{id:fid, label:f?f.name:fid, thumb:`/thumb/${fid}.jpg?v=${f?f.thumb_ver:0}`}};
+    if(knownPositions[fid]){
+      node.position = {x: knownPositions[fid].x, y: knownPositions[fid].y};
+    } else {
+      unknownNodes.push(fid);
+    }
+    els.push(node);
   }
   relGraph.edges.forEach((e, i) => {
     els.push({group:'edges', data:{
@@ -599,7 +623,33 @@ function relRenderCanvas(){
       {selector:'edge[family = "1"]', style:{'line-color':'#4fc3f7', 'target-arrow-color':'#4fc3f7', 'color':'#9cf'}},
       {selector:'edge:selected', style:{'line-color':'#ffeb3b', 'target-arrow-color':'#ffeb3b', 'width':3}},
     ],
-    layout:{name:'cose', animate:false, idealEdgeLength:120, nodeRepulsion:8000},
+    // preset：尊重已知 position，不亂搬；新節點若沒位置會疊在 (0,0)，user 拖開即可
+    layout:{name:'preset', fit: unknownNodes.length === relGraph.nodes.length},
+  });
+
+  // 只在「所有節點都沒位置」時自動 cose 一次，讓初次體驗不要全擠原點
+  if(unknownNodes.length === relGraph.nodes.length && relGraph.nodes.length > 0){
+    cy.layout({name:'cose', animate:false, idealEdgeLength:120, nodeRepulsion:8000}).run();
+    // 把 cose 算出的位置寫回 relGraph.positions
+    cy.nodes().forEach(n => {
+      relGraph.positions[n.id()] = {x: n.position('x'), y: n.position('y')};
+    });
+  } else if(unknownNodes.length > 0){
+    // 部分新節點沒位置 → 都放 viewport 中央
+    const ext = cy.extent();
+    const cx = (ext.x1 + ext.x2) / 2;
+    const cy_center = (ext.y1 + ext.y2) / 2;
+    unknownNodes.forEach((fid, i) => {
+      const p = {x: cx + i * 30, y: cy_center + i * 30};
+      cy.$('#' + CSS.escape(fid)).position(p);
+      relGraph.positions[fid] = p;
+    });
+  }
+
+  // 拖動結束 → 即時更新 positions（不打到後端，等 save 一起送）
+  cy.on('dragfree', 'node', evt => {
+    const n = evt.target;
+    relGraph.positions[n.id()] = {x: n.position('x'), y: n.position('y')};
   });
 
   cy.on('tap', 'node', evt => {
@@ -1483,8 +1533,11 @@ class Handler(SimpleHTTPRequestHandler):
         """儲存圖 + 從圖自動推導 relationships.json。"""
         nodes = body.get("nodes") or []
         edges = body.get("edges") or []
+        positions = body.get("positions") or {}
         if not isinstance(nodes, list) or not isinstance(edges, list):
             return {"ok": False, "error": "nodes / edges 必須是陣列"}
+        if not isinstance(positions, dict):
+            positions = {}
         clean_nodes = [n for n in nodes if isinstance(n, str) and n.strip()]
         clean_edges: list[dict] = []
         for e in edges:
@@ -1502,7 +1555,16 @@ class Handler(SimpleHTTPRequestHandler):
             if e.get("alias_to"):
                 clean["alias_to"] = str(e["alias_to"]).strip()
             clean_edges.append(clean)
-        graph = {"nodes": clean_nodes, "edges": clean_edges}
+        # positions: 只保留還在 nodes 內的 fid，且 x/y 為數字
+        node_set = set(clean_nodes)
+        clean_positions: dict[str, dict] = {}
+        for fid, p in positions.items():
+            if fid not in node_set or not isinstance(p, dict):
+                continue
+            x, y = p.get("x"), p.get("y")
+            if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                clean_positions[fid] = {"x": float(x), "y": float(y)}
+        graph = {"nodes": clean_nodes, "edges": clean_edges, "positions": clean_positions}
         _auth.save_relationship_graph(graph)
         # 自動推導 relationships.json（家人邊才產 alias；非家人邊只在圖上顯示）
         derived = _auth.derive_relationships(graph)
