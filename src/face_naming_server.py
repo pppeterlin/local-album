@@ -269,16 +269,16 @@ input[type=checkbox]{accent-color:#4fc3f7}
   <div class="box">
     <h3 id="rel-edge-title">編輯關係</h3>
     <div class="row">
-      <label>類型（"from 是 to 的 ___"）</label>
-      <select id="rel-edge-type"></select>
+      <label id="rel-edge-type-label">關係類型</label>
+      <select id="rel-edge-type" onchange="relUpdatePlaceholders()"></select>
     </div>
     <div class="row">
-      <label>覆寫：to 從 from 角度的稱呼（留空用預設）</label>
-      <input type="text" id="rel-edge-alias-from" placeholder="例：兒子">
+      <label id="rel-edge-alias-from-label">覆寫稱呼</label>
+      <input type="text" id="rel-edge-alias-from">
     </div>
     <div class="row">
-      <label>覆寫：from 從 to 角度的稱呼（留空用預設）</label>
-      <input type="text" id="rel-edge-alias-to" placeholder="例：爸爸">
+      <label id="rel-edge-alias-to-label">覆寫稱呼</label>
+      <input type="text" id="rel-edge-alias-to">
     </div>
     <div class="footer">
       <button class="danger" onclick="relEdgeDelete()">刪除</button>
@@ -507,9 +507,11 @@ let cy = null;
 let relGraph = {nodes:[], edges:[]};
 let relFamilyTypes = [];
 let relNonFamilyTypes = [];
+let relFamilyRules = {};          // {type: [forward, backward]} for placeholder hints
 let relAddEdgeFirstNode = null;   // when in add-edge mode, holds the first clicked node id
 let relEditingEdgeId = null;      // edge id currently in dialog
 let relPendingNewEdge = null;     // {source, target} captured before dialog opens
+let relDialogPair = null;         // {from, to} currently in dialog (for label rewriting)
 
 function faceById(fid){ return FACES.find(f=>f.id===fid); }
 
@@ -520,6 +522,7 @@ function relInit(){
     if(!relGraph.positions) relGraph.positions = {};
     relFamilyTypes = d.family_types || [];
     relNonFamilyTypes = d.non_family_types || [];
+    relFamilyRules = d.family_rules || {};
     renderRelSidebar();
     relRenderCanvas();
   });
@@ -740,20 +743,46 @@ function relOpenEdgeDialog(edge){
     const fam = relFamilyTypes.includes(t);
     return `<option value="${escapeHtml(t)}">${escapeHtml(t)}${fam?' (家人)':''}</option>`;
   }).join('') + '<option value="__custom__">自訂...</option>';
-  let title;
+  let title, fromFid, toFid;
   if(edge){
     sel.value = relFamilyTypes.includes(edge.type) || relNonFamilyTypes.includes(edge.type) ? edge.type : '__custom__';
-    title = `編輯：${faceLabel(edge.from)} → ${faceLabel(edge.to)}`;
+    fromFid = edge.from; toFid = edge.to;
+    title = `編輯：${faceLabel(fromFid)} → ${faceLabel(toFid)}`;
     $('rel-edge-alias-from').value = edge.alias_from || '';
     $('rel-edge-alias-to').value = edge.alias_to || '';
   } else if(relPendingNewEdge){
     sel.value = relFamilyTypes[0] || '__custom__';
-    title = `新增：${faceLabel(relPendingNewEdge.source)} → ${faceLabel(relPendingNewEdge.target)}`;
+    fromFid = relPendingNewEdge.source; toFid = relPendingNewEdge.target;
+    title = `新增:${faceLabel(fromFid)} → ${faceLabel(toFid)}`;
     $('rel-edge-alias-from').value = '';
     $('rel-edge-alias-to').value = '';
   }
   $('rel-edge-title').textContent = title;
+
+  // 用實際名字改寫 label 跟 placeholder，避免 from/to 抽象易錯
+  const fromName = faceLabel(fromFid);
+  const toName = faceLabel(toFid);
+  $('rel-edge-type-label').textContent = `關係類型（${fromName} 是 ${toName} 的 ___）`;
+  $('rel-edge-alias-from-label').textContent = `${fromName} 怎麼稱呼 ${toName}（覆寫；留空用預設）`;
+  $('rel-edge-alias-to-label').textContent = `${toName} 怎麼稱呼 ${fromName}（覆寫；留空用預設）`;
+  relUpdatePlaceholders();
   $('rel-edge-dialog').classList.add('active');
+}
+
+function relUpdatePlaceholders(){
+  // 依目前選擇的類型，顯示預設稱呼當 placeholder
+  const typ = $('rel-edge-type').value;
+  const rule = relFamilyRules[typ];
+  if(rule){
+    // rule = [forward, backward]
+    // forward = from 從 to 視角看到的稱呼 → alias_to
+    // backward = to 從 from 視角看到的稱呼 → alias_from
+    $('rel-edge-alias-from').placeholder = '預設：' + rule[1];
+    $('rel-edge-alias-to').placeholder = '預設：' + rule[0];
+  } else {
+    $('rel-edge-alias-from').placeholder = '（非家人類型不會自動產生 alias）';
+    $('rel-edge-alias-to').placeholder = '（非家人類型不會自動產生 alias）';
+  }
 }
 
 function relEdgeSave(){
@@ -947,6 +976,8 @@ class Handler(SimpleHTTPRequestHandler):
                 "graph": _auth.load_relationship_graph(),
                 "family_types": list(_auth.FAMILY_EDGE_RULES.keys()),
                 "non_family_types": sorted(_auth.NON_FAMILY_TYPES),
+                # rules so the dialog can show default aliases as placeholders
+                "family_rules": {k: list(v) for k, v in _auth.FAMILY_EDGE_RULES.items()},
             })
 
         elif path.startswith("/image/"):
