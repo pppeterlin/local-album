@@ -3,7 +3,9 @@ Pet_Detector.py — 寵物（貓）偵測 + 分群。
 
 策略：
   1. YOLOv8n 偵測 cat bbox（COCO class 15）
-  2. CLIP 對裁切的 bbox 做 image embedding
+  2. DINOv2-small 對裁切的 bbox 做 image embedding
+     （CLIP 因為著重「是什麼」而非「是誰」，個體區辨力不足；
+      DINOv2 self-supervised features 在同類別內個體 re-id 表現遠勝）
   3. DBSCAN 分群 → pet_clusters.json
   4. 每個 cluster 取信心分數最高的偵測當作縮圖
 
@@ -43,8 +45,23 @@ from _paths import PETS_DIR  # noqa: E402
 LOGGER = logging.getLogger("PetDetector")
 
 COCO_CAT_CLASS = 15  # YOLO/COCO: 15=cat, 16=dog
-CLIP_MODEL_NAME = "ViT-B-32"  # 對裁切後的 cat bbox 已足夠分辨個體；用小模型加速
-CLIP_PRETRAINED = "laion2b_s34b_b79k"
+# DINOv2-small：self-supervised features 對「同類別內個體區辨」遠勝 CLIP，
+# 後者語義空間裡所有貓會擠成一團。84MB 權重，384-d 輸出，torch.hub 載入。
+DINOV2_VARIANT = "dinov2_vits14"
+DINOV2_INPUT_SIZE = 224  # ViT-S/14 預設輸入
+
+
+def _path_date(path: str) -> Optional[str]:
+    """從 filename 嘗試取 YYYY-MM-DD（IMG_20240522_xxx、20240522-xxx 等格式）。"""
+    import re
+    basename = Path(path).name
+    m = re.search(r"(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)", basename)
+    if not m:
+        return None
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if 1990 <= y <= 2030 and 1 <= mo <= 12 and 1 <= d <= 31:
+        return f"{y:04d}-{mo:02d}-{d:02d}"
+    return None
 
 
 def _is_skip_path(p: str) -> bool:
@@ -66,20 +83,20 @@ def _is_skip_path(p: str) -> bool:
 
 
 class PetDetector:
-    """貓偵測 + CLIP embedding + DBSCAN 分群。"""
+    """貓偵測 (YOLO) + DINOv2 embedding + DBSCAN 分群。"""
 
     def __init__(
         self,
         yolo_model: str = "yolov8n.pt",
         conf_threshold: float = 0.35,
-        clip_device: Optional[str] = None,
+        embed_device: Optional[str] = None,
     ):
         self.yolo_model = yolo_model
         self.conf_threshold = conf_threshold
-        self.clip_device = clip_device  # None → auto (mps/cuda/cpu)
+        self.embed_device = embed_device  # None → auto (mps/cuda/cpu)
         self._yolo = None
-        self._clip_model = None
-        self._clip_preprocess = None
+        self._embed_model = None
+        self._embed_transform = None
 
     # ---- model loading (lazy) ----
 
@@ -91,33 +108,37 @@ class PetDetector:
         self._yolo = YOLO(self.yolo_model)
         LOGGER.info("YOLO ready")
 
-    def _init_clip(self):
-        if self._clip_model is not None:
+    def _init_embed(self):
+        if self._embed_model is not None:
             return
-        import open_clip
         import torch
-        if self.clip_device is None:
+        from torchvision import transforms
+        if self.embed_device is None:
             if torch.backends.mps.is_available():
-                self.clip_device = "mps"
+                self.embed_device = "mps"
             elif torch.cuda.is_available():
-                self.clip_device = "cuda"
+                self.embed_device = "cuda"
             else:
-                self.clip_device = "cpu"
-        LOGGER.info("Loading CLIP %s (%s) on %s ...", CLIP_MODEL_NAME, CLIP_PRETRAINED, self.clip_device)
-        model, _, preprocess = open_clip.create_model_and_transforms(
-            CLIP_MODEL_NAME, pretrained=CLIP_PRETRAINED
-        )
-        model = model.to(self.clip_device).eval()
-        self._clip_model = model
-        self._clip_preprocess = preprocess
-        LOGGER.info("CLIP ready")
+                self.embed_device = "cpu"
+        LOGGER.info("Loading DINOv2 %s on %s ...", DINOV2_VARIANT, self.embed_device)
+        model = torch.hub.load("facebookresearch/dinov2", DINOV2_VARIANT, pretrained=True, source="github")
+        model = model.to(self.embed_device).eval()
+        self._embed_model = model
+        # ImageNet 標準預處理
+        self._embed_transform = transforms.Compose([
+            transforms.Resize(DINOV2_INPUT_SIZE, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.CenterCrop(DINOV2_INPUT_SIZE),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+        LOGGER.info("DINOv2 ready")
 
     # ---- detection on one image ----
 
     def detect_cats(self, image_path: str) -> List[Dict]:
         """回傳 [{bbox: [x1,y1,x2,y2], conf: float, embedding: np.ndarray}]。"""
         self._init_yolo()
-        self._init_clip()
+        self._init_embed()
         import cv2
         from PIL import Image
         import torch
@@ -143,7 +164,7 @@ class PetDetector:
         if r.boxes is None or len(r.boxes) == 0:
             return []
 
-        # 取 bbox + 信心，crop 後送 CLIP
+        # 取 bbox + 信心，crop 後送 DINOv2
         out: List[Dict] = []
         boxes_xyxy = r.boxes.xyxy.cpu().numpy()
         confs = r.boxes.conf.cpu().numpy()
@@ -170,10 +191,10 @@ class PetDetector:
         if not crops_pil:
             return []
 
-        # batch CLIP forward
+        # batch DINOv2 forward
         with torch.no_grad():
-            batch = torch.stack([self._clip_preprocess(c) for c in crops_pil]).to(self.clip_device)
-            embs = self._clip_model.encode_image(batch)
+            batch = torch.stack([self._embed_transform(c) for c in crops_pil]).to(self.embed_device)
+            embs = self._embed_model(batch)  # (N, 384)
             embs = embs / embs.norm(dim=-1, keepdim=True)
             embs = embs.cpu().numpy().astype(np.float32)
 
@@ -190,16 +211,46 @@ class PetDetector:
         eps: float = 0.35,
         min_samples: int = 2,
         max_new: int = 0,
+        caption_grep: Optional[str] = None,
+        since_date: Optional[str] = None,
     ) -> Dict:
         """完整 pipeline：偵測 → 串流寫 JSONL → DBSCAN → 寫 pet_clusters.json + 縮圖。"""
+        import re as _re
         LOGGER.info("Loading labels from %s", labels_path)
         with open(labels_path, "r", encoding="utf-8") as f:
             labels_data = json.load(f)
-        image_paths = [
-            r["path"] for r in labels_data.get("results", [])
-            if "error" not in r and not _is_skip_path(r.get("path", ""))
-        ]
-        LOGGER.info("Total images: %d", len(image_paths))
+
+        records = [r for r in labels_data.get("results", []) if "error" not in r]
+        total_input = len(records)
+
+        # 預先過濾：caption 含關鍵字（regex）、日期 >= since_date、跳過系統路徑
+        cap_re = _re.compile(caption_grep, _re.IGNORECASE) if caption_grep else None
+        image_paths: List[str] = []
+        n_dropped_caption = n_dropped_date = n_dropped_skip = 0
+        for r in records:
+            p = r.get("path", "")
+            if not p or _is_skip_path(p):
+                n_dropped_skip += 1
+                continue
+            if since_date:
+                d = _path_date(p)
+                # 日期解析不出來 → 保留（避免漏掉非標準命名的近期照片）；
+                # 解得出但早於 since → 丟掉
+                if d is not None and d < since_date:
+                    n_dropped_date += 1
+                    continue
+            if cap_re and not cap_re.search(r.get("text", "")):
+                n_dropped_caption += 1
+                continue
+            image_paths.append(p)
+
+        LOGGER.info(
+            "Filtered: %d → %d (dropped: skip-path=%d, date=%d, caption=%d)",
+            total_input, len(image_paths), n_dropped_skip, n_dropped_date, n_dropped_caption,
+        )
+        if not image_paths:
+            LOGGER.warning("No images after filtering; nothing to do")
+            return {"clusters": {}, "total_cats": 0}
 
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -379,12 +430,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--min-samples", type=int, default=2, help="DBSCAN min_samples")
     p.add_argument("--max-new", type=int, default=0,
                    help="Process at most N new images then exit (for batch subprocesses)")
+    p.add_argument("--caption-grep", default=None,
+                   help='Only consider images whose Vision-API caption matches this regex '
+                        '(case-insensitive). Example: "貓|猫|cat|kitten" — drastically cuts '
+                        'the YOLO workload by skipping captions that don\'t mention cats.')
+    p.add_argument("--since", default=None,
+                   help='Only consider images dated >= YYYY-MM-DD (date parsed from filename). '
+                        'Example: "2022-05-01" if you started having cats then.')
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
     _setup_logging(args.log_level)
 
     det = PetDetector(yolo_model=args.yolo_model, conf_threshold=args.conf)
-    det.run(args.labels, args.output, eps=args.eps, min_samples=args.min_samples, max_new=args.max_new)
+    det.run(
+        args.labels, args.output,
+        eps=args.eps, min_samples=args.min_samples, max_new=args.max_new,
+        caption_grep=args.caption_grep, since_date=args.since,
+    )
     return 0
 
 
