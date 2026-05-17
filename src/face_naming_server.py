@@ -1812,6 +1812,18 @@ class Handler(SimpleHTTPRequestHandler):
     # ---- data assembly ----
 
     def get_all_sorted(self, flt, kind: str = "face"):
+        # kind="all" = viewer 統一視圖：face + pet 合併，每筆 item 自帶 kind
+        if kind == "all":
+            face_items = self.get_all_sorted(flt, "face")
+            pet_items = self.get_all_sorted(flt, "pet")
+            for r in face_items:
+                r["kind"] = "face"
+            for r in pet_items:
+                r["kind"] = "pet"
+            combined = face_items + pet_items
+            combined.sort(key=lambda r: (r["skipped"], -r["count"]))
+            return combined
+
         faces = load_clusters(kind) or {}
         names = load_names_k(kind)
         removed = load_removed_k(kind)
@@ -2027,9 +2039,10 @@ class Handler(SimpleHTTPRequestHandler):
         end = start + PAGE_SIZE
         items = all_data[start:end]
         # 個人化顯示名稱：只對人臉 cluster 套用 relationships.json
-        # （寵物的名字直接顯示 admin 設的稱呼，沒有 perspective alias）
-        if kind == "face":
-            for r in items:
+        # （寵物名稱保持 canonical，沒有 perspective alias）
+        for r in items:
+            item_kind = r.get("kind", kind)
+            if item_kind == "face":
                 r["name"] = self._personalize_name(r["id"], r.get("name", ""))
         return {
             "page": page,
@@ -2040,6 +2053,11 @@ class Handler(SimpleHTTPRequestHandler):
         }
 
     def get_stats(self, kind: str = "face"):
+        # all 模式：把 face + pet 的 stats 加總（viewer 不在乎拆 face/pet）
+        if kind == "all":
+            f = self.get_stats("face")
+            p = self.get_stats("pet")
+            return {k: f.get(k, 0) + p.get(k, 0) for k in ("total", "displayed", "named", "skipped", "merges")}
         names = load_names_k(kind)
         skipped = load_skipped_k(kind)
         merges = load_merges_k(kind)
@@ -2437,20 +2455,26 @@ document.getElementById('whoami').textContent = window.CURRENT_USER || '(未登�
 document.getElementById('role-tag').textContent = window.IS_ADMIN ? '(admin)' : '(viewer · 唯讀)';
 if(window.IS_ADMIN){ document.body.classList.add('admin'); }
 
-// kind toggle 顯示邏輯：只有兩種 kind 都有資料時才顯示 toggle
+// kind toggle 顯示邏輯
 const kt = document.getElementById('kindToggle');
 if(kt){
   const btnFace = kt.querySelector('[data-kind="face"]');
   const btnPet  = kt.querySelector('[data-kind="pet"]');
-  if(btnFace) btnFace.style.display = window.HAS_FACE ? '' : 'none';
-  if(btnPet)  btnPet.style.display  = window.HAS_PET  ? '' : 'none';
-  if(!window.HAS_FACE && !window.HAS_PET) kt.classList.add('hidden');
-  if(!(window.HAS_FACE && window.HAS_PET)) kt.classList.add('hidden');  // 只有一種 → 不必顯示 toggle
-  // 預設 kind：face 有資料就用 face，否則 pet
-  if(!window.HAS_FACE && window.HAS_PET){
-    window.KIND = 'pet';
-    if(btnPet) btnPet.classList.add('active');
-    if(btnFace) btnFace.classList.remove('active');
+  // viewer：不分 face/pet，直接 kind=all，整個 toggle 隱藏
+  if(!window.IS_ADMIN){
+    window.KIND = 'all';
+    kt.classList.add('hidden');
+  } else {
+    if(btnFace) btnFace.style.display = window.HAS_FACE ? '' : 'none';
+    if(btnPet)  btnPet.style.display  = window.HAS_PET  ? '' : 'none';
+    if(!window.HAS_FACE && !window.HAS_PET) kt.classList.add('hidden');
+    if(!(window.HAS_FACE && window.HAS_PET)) kt.classList.add('hidden');
+    // admin 預設 kind
+    if(!window.HAS_FACE && window.HAS_PET){
+      window.KIND = 'pet';
+      if(btnPet) btnPet.classList.add('active');
+      if(btnFace) btnFace.classList.remove('active');
+    }
   }
 }
 
@@ -2554,7 +2578,7 @@ function renderListRow(c){
     </div>` : '<div></div>';
   return `
     <div class="list-row" id="row_${fid}">
-      <img class="lr-thumb" src="${thumbUrl(fid, c.thumb_v)}" onerror="this.style.visibility='hidden'">
+      <img class="lr-thumb" src="${thumbUrl(fid, c.thumb_v, c.kind)}" onerror="this.style.visibility='hidden'">
       <div class="lr-id">${fid}</div>
       <div class="lr-name" id="name_${fid}" ${nameClick}>${c.name}</div>
       <div class="lr-count">${c.count} 張</div>
@@ -2672,7 +2696,7 @@ function renderCard(c){
     return `
       <div class="tile" onclick="openExpand('${fid}')" role="button" tabindex="0"
            onkeydown="if(event.key==='Enter'||event.key===' ')openExpand('${fid}')">
-        <img class="avatar" src="${thumbUrl(fid, c.thumb_v)}" alt="${label.replace(/"/g,'&quot;')}" loading="lazy" onerror="this.style.visibility='hidden'">
+        <img class="avatar" src="${thumbUrl(fid, c.thumb_v, c.kind)}" alt="${label.replace(/"/g,'&quot;')}" loading="lazy" onerror="this.style.visibility='hidden'">
         <div class="tname">${label}</div>
       </div>`;
   }
@@ -2737,7 +2761,7 @@ function renderCard(c){
           <div class="count">${c.count} 張${c.count!==c.original_count?' (原 '+c.original_count+')':''}</div>
           ${mergedBadge}
         </div>
-        <img class="face-thumb" src="${thumbUrl(fid, c.thumb_v)}" onerror="this.style.display='none'">
+        <img class="face-thumb" src="${thumbUrl(fid, c.thumb_v, c.kind)}" onerror="this.style.display='none'">
       </div>
       <div class="photo-grid">${previewImgs}</div>
       <div class="expand-bar" onclick="event.stopPropagation();openExpand('${fid}')">
@@ -2767,7 +2791,10 @@ function openExpand(fid){
   }
   document.getElementById('expandBody').innerHTML = '<div style="padding:30px;color:#888;text-align:center">載入中…</div>';
   document.getElementById('expandModal').classList.add('active');
-  fetch(kq(`/api/cluster_meta?fid=${encodeURIComponent(fid)}`)).then(r=>r.json()).then(meta=>{
+  // 用 item 自己的 kind（混合模式下必要），fallback 到 window.KIND
+  const it = ITEMS.find(x => x.id === fid);
+  const itemKind = (it && it.kind) || (window.KIND === 'all' ? 'face' : window.KIND);
+  fetch(`/api/cluster_meta?fid=${encodeURIComponent(fid)}&kind=${encodeURIComponent(itemKind)}`).then(r=>r.json()).then(meta=>{
     if(openExpandFid !== fid) return;
     openExpandMeta = meta;
     // 預設：只展開最新年度，其餘折疊。「無日期」也預設折疊。
@@ -2982,7 +3009,9 @@ function toggleYear(y){
 
 function refreshExpandMeta(){
   if(!openExpandFid) return Promise.resolve();
-  return fetch(kq(`/api/cluster_meta?fid=${encodeURIComponent(openExpandFid)}`))
+  const it = ITEMS.find(x => x.id === openExpandFid);
+  const itemKind = (it && it.kind) || (window.KIND === 'all' ? 'face' : window.KIND);
+  return fetch(`/api/cluster_meta?fid=${encodeURIComponent(openExpandFid)}&kind=${encodeURIComponent(itemKind)}`)
     .then(r=>r.json()).then(meta=>{
       if(openExpandFid){ openExpandMeta = meta; renderExpandBody(); }
     });
@@ -3278,9 +3307,10 @@ function kq(url){
   return url + sep + 'kind=' + encodeURIComponent(window.KIND);
 }
 
-// 取得 cluster 縮圖路徑（依 kind 選 face / pet thumb endpoint）
-function thumbUrl(fid, ver){
-  const base = (window.KIND === 'pet') ? '/pet_thumb/' : '/thumb/';
+// 取得 cluster 縮圖路徑。kindOverride 可由 item.kind 傳入（用於 kind=all viewer 混合視圖）
+function thumbUrl(fid, ver, kindOverride){
+  const k = kindOverride || window.KIND;
+  const base = (k === 'pet') ? '/pet_thumb/' : '/thumb/';
   return base + encodeURIComponent(fid) + '.jpg?v=' + (ver || 0);
 }
 </script>
