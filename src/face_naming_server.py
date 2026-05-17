@@ -449,6 +449,16 @@ class Handler(SimpleHTTPRequestHandler):
             self._cached_perms = _auth.get_user_perms(self._user())
         return self._cached_perms
 
+    def _relationships(self):
+        if not hasattr(self, "_cached_rels"):
+            self._cached_rels = _auth.load_relationships()
+        return self._cached_rels
+
+    def _personalize_name(self, fid: str, canonical: str) -> str:
+        """套用 relationships.json + self-as-我 規則回傳顯示名稱。"""
+        viewer_id = self._perms().get("identity") or ""
+        return _auth.display_name_for(viewer_id, fid, canonical, self._relationships())
+
     def _require_login(self):
         """Return False (and serve login) if no valid session. True → continue."""
         if self._user():
@@ -1302,12 +1312,18 @@ class Handler(SimpleHTTPRequestHandler):
         page = max(0, min(page, total_pages - 1))
         start = page * PAGE_SIZE
         end = start + PAGE_SIZE
+        items = all_data[start:end]
+        # 個人化顯示名稱：登入者的 identity 自動顯示為「我」，
+        # 其餘按 relationships.json 對應（例：mom 看 chun → 「兒子」）。
+        # 只在這條（瀏覽用）API 套用；管理用的 /api/clusters、/admin 仍給 canonical。
+        for r in items:
+            r["name"] = self._personalize_name(r["id"], r.get("name", ""))
         return {
             "page": page,
             "page_size": PAGE_SIZE,
             "total": total,
             "total_pages": total_pages,
-            "items": all_data[start:end],
+            "items": items,
         }
 
     def get_stats(self):

@@ -41,6 +41,11 @@ AUTH_DIR = METADATA_DIR / "auth"
 USERS_FILE = AUTH_DIR / "users.json"
 GROUPS_FILE = AUTH_DIR / "groups.json"
 SECRET_FILE = AUTH_DIR / ".session_secret"
+# Per-viewer display-name aliases (e.g. mom sees chun as "兒子").
+# Schema: {viewer_face_id: {target_face_id: "alias", ...}}
+# Self alias (same key as viewer) overrides the default "我".
+# Local file under METADATA_DIR/auth (already outside the repo / gitignored).
+RELATIONSHIPS_FILE = AUTH_DIR / "relationships.json"
 
 SESSION_TTL_SEC = 365 * 24 * 60 * 60  # 1 year
 COOKIE_NAME = "lasession"
@@ -145,6 +150,28 @@ def load_users() -> dict:    return _load_json(USERS_FILE, {})
 def save_users(d): _save_json(USERS_FILE, d)
 def load_groups() -> dict:   return _load_json(GROUPS_FILE, {})
 def save_groups(d): _save_json(GROUPS_FILE, d)
+def load_relationships() -> dict: return _load_json(RELATIONSHIPS_FILE, {})
+
+
+def display_name_for(
+    viewer_identity: str,
+    target_face_id: str,
+    canonical_name: str,
+    relationships: dict,
+) -> str:
+    """個人化顯示名稱。優先序：
+      1. relationships[viewer][target] 存在 → 用 alias（可覆寫 self 預設）
+      2. target == viewer → 「我」
+      3. 否則 → canonical_name
+    """
+    if not viewer_identity:
+        return canonical_name
+    rel = relationships.get(viewer_identity, {})
+    if target_face_id in rel:
+        return rel[target_face_id]
+    if target_face_id == viewer_identity:
+        return "我"
+    return canonical_name
 
 # --- permission resolution --------------------------------------------------
 
