@@ -240,10 +240,11 @@ input[type=checkbox]{accent-color:#4fc3f7}
         進入連線模式（點兩個節點建立關係）。點 edge 編輯，按 <kbd>Delete</kbd> 刪除選取。
         儲存後系統會自動為「家人」關係產生稱呼 alias。
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="rel-save-status" style="font-size:12px;color:#666;margin-right:4px">—</span>
         <button class="ghost" onclick="relAddEdgeMode()">➕ 加邊</button>
         <button class="ghost" onclick="relAutoLayout()">↻ 重排</button>
-        <button class="primary" onclick="relSave()">💾 儲存</button>
+        <button class="ghost" onclick="relSave()" title="立即儲存（平常會自動存）">💾</button>
       </div>
     </div>
   </div>
@@ -512,11 +513,46 @@ let relAddEdgeFirstNode = null;   // when in add-edge mode, holds the first clic
 let relEditingEdgeId = null;      // edge id currently in dialog
 let relPendingNewEdge = null;     // {source, target} captured before dialog opens
 let relDialogPair = null;         // {from, to} currently in dialog (for label rewriting)
+let relSaveTimer = null;          // debounced auto-save handle
+let relSaveLoaded = false;        // skip auto-save during initial load
+
+function relSetStatus(text, color){
+  const el = $('rel-save-status');
+  if(!el) return;
+  el.textContent = text;
+  el.style.color = color || '#666';
+}
+
+function relMarkDirty(){
+  if(!relSaveLoaded) return;          // 初始載入不算 dirty
+  clearTimeout(relSaveTimer);
+  relSetStatus('● 未儲存', '#ffb74d');
+  relSaveTimer = setTimeout(relSavePost, 800);
+}
+
+function relSavePost(){
+  relSetStatus('● 儲存中...', '#9cc');
+  api('POST', '/api/admin/relationship-graph', relGraph).then(r => {
+    if(r.ok){
+      const t = new Date();
+      const hh = String(t.getHours()).padStart(2,'0');
+      const mm = String(t.getMinutes()).padStart(2,'0');
+      const ss = String(t.getSeconds()).padStart(2,'0');
+      relSetStatus(`✓ 已儲存 ${hh}:${mm}:${ss}（${r.nodes}n / ${r.edges}e / ${r.aliases} aliases）`, '#81c784');
+    } else {
+      relSetStatus('✗ ' + (r.error || '儲存失敗'), '#ef5350');
+    }
+  }).catch(e => {
+    relSetStatus('✗ 儲存失敗: ' + (e.message || e), '#ef5350');
+  });
+}
 
 function faceById(fid){ return FACES.find(f=>f.id===fid); }
 
 function relInit(){
   // load graph + types from backend; faces come from FACES (already loaded)
+  relSaveLoaded = false;
+  relSetStatus('載入中...', '#666');
   fetch('/api/admin/relationship-graph').then(r=>r.json()).then(d=>{
     relGraph = d.graph || {nodes:[], edges:[]};
     if(!relGraph.positions) relGraph.positions = {};
@@ -525,6 +561,8 @@ function relInit(){
     relFamilyRules = d.family_rules || {};
     renderRelSidebar();
     relRenderCanvas();
+    relSaveLoaded = true;
+    relSetStatus('✓ 已就緒（變更會自動儲存）', '#81c784');
   });
 }
 
@@ -559,6 +597,7 @@ function relAddNode(fid){
             position:{x: cx, y: cy_}});
     relGraph.positions[fid] = {x: cx, y: cy_};
   }
+  relMarkDirty();
 }
 
 function relRemoveNode(fid){
@@ -569,6 +608,7 @@ function relRemoveNode(fid){
   if(cy){
     cy.$('#'+CSS.escape(fid)).remove();
   }
+  relMarkDirty();
 }
 
 function relRenderCanvas(){
@@ -649,10 +689,11 @@ function relRenderCanvas(){
     });
   }
 
-  // 拖動結束 → 即時更新 positions（不打到後端，等 save 一起送）
+  // 拖動結束 → 即時更新 positions + debounced auto-save
   cy.on('dragfree', 'node', evt => {
     const n = evt.target;
     relGraph.positions[n.id()] = {x: n.position('x'), y: n.position('y')};
+    relMarkDirty();
   });
 
   cy.on('tap', 'node', evt => {
@@ -707,6 +748,7 @@ function relKeydownHandler(e){
       const idx = parseInt(el.id().slice(1));
       relGraph.edges.splice(idx, 1);
       relRenderCanvas();
+      relMarkDirty();
     }
   });
 }
@@ -810,6 +852,7 @@ function relEdgeSave(){
   relPendingNewEdge = null;
   $('rel-edge-dialog').classList.remove('active');
   relRenderCanvas();
+  relMarkDirty();
 }
 
 function relEdgeDelete(){
@@ -821,6 +864,7 @@ function relEdgeDelete(){
   relEditingEdgeId = null;
   $('rel-edge-dialog').classList.remove('active');
   relRenderCanvas();
+  relMarkDirty();
 }
 
 function relEdgeCancel(){
@@ -830,13 +874,9 @@ function relEdgeCancel(){
 }
 
 function relSave(){
-  api('POST', '/api/admin/relationship-graph', relGraph).then(r => {
-    if(r.ok){
-      showMsg(`✓ 已儲存：${r.nodes} 節點、${r.edges} 邊、產出 ${r.aliases} 個 alias`, true);
-    } else {
-      showMsg(r.error || '儲存失敗', false);
-    }
-  });
+  // 立即 flush（取消 debounce）
+  clearTimeout(relSaveTimer);
+  relSavePost();
 }
 
 // ---- bootstrap ----
