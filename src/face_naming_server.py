@@ -161,7 +161,31 @@ input[type=checkbox]{accent-color:#4fc3f7}
 .group-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 .group-header h2{font-size:16px;color:#4fc3f7}
 .summary{color:#888;font-size:12px;margin-bottom:8px}
+/* relationship graph editor */
+.rel-layout{display:grid;grid-template-columns:240px 1fr;gap:12px;height:600px}
+.rel-sidebar{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;padding:10px;overflow-y:auto}
+.rel-sidebar h4{font-size:13px;color:#9cf;margin-bottom:8px}
+.rel-face{display:flex;gap:8px;align-items:center;padding:6px;border-radius:6px;cursor:pointer;margin-bottom:4px}
+.rel-face:hover{background:#222}
+.rel-face.in-graph{opacity:.35;cursor:default}
+.rel-face img{width:36px;height:36px;border-radius:50%;object-fit:cover;background:#000}
+.rel-face .n{font-size:12px;color:#ddd;line-height:1.2;flex:1}
+.rel-face .n .fid{color:#666;font-size:10px;font-family:monospace;display:block}
+.rel-canvas{background:#111;border:1px solid #2a2a2a;border-radius:10px;position:relative}
+#cy{width:100%;height:100%}
+.rel-toolbar{position:absolute;top:8px;left:8px;display:flex;gap:6px;z-index:10}
+.rel-toolbar .hint{position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,.6);padding:6px 10px;border-radius:6px;color:#9cc;font-size:12px;pointer-events:none}
+.rel-dialog{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:100}
+.rel-dialog.active{display:flex}
+.rel-dialog .box{background:#1a1a1a;border:1px solid #333;border-radius:10px;padding:18px;width:min(420px,92vw)}
+.rel-dialog .box h3{color:#4fc3f7;font-size:15px;margin-bottom:12px}
+.rel-dialog .row{margin-bottom:10px}
+.rel-dialog .row label{display:block;font-size:12px;color:#888;margin-bottom:4px}
+.rel-dialog .row select,.rel-dialog .row input{width:100%}
+.rel-dialog .footer{display:flex;justify-content:space-between;margin-top:14px}
+.adding-edge #cy{cursor:crosshair}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 </head><body>
 <div class="userbar">
   <div>👤 <span class="who">__USER__</span> <span style="color:#666;font-size:11px">(admin)</span></div>
@@ -177,6 +201,7 @@ input[type=checkbox]{accent-color:#4fc3f7}
 <div class="tabs">
   <button class="active" data-tab="users" onclick="switchTab('users')">使用者</button>
   <button data-tab="groups" onclick="switchTab('groups')">群組</button>
+  <button data-tab="rels" onclick="switchTab('rels')">關係圖</button>
 </div>
 
 <!-- USERS -->
@@ -202,6 +227,66 @@ input[type=checkbox]{accent-color:#4fc3f7}
     <table id="users-table"><thead>
       <tr><th>名稱</th><th>權限</th><th>身份</th><th>群組</th><th style="text-align:right">動作</th></tr>
     </thead><tbody></tbody></table>
+  </div>
+</div>
+
+<!-- RELATIONSHIPS -->
+<div class="panel" id="panel-rels">
+  <div class="card" style="margin-bottom:10px">
+    <div class="row" style="justify-content:space-between">
+      <div style="color:#888;font-size:13px">
+        從左側拖人臉縮圖到 canvas 加節點；按
+        <span style="color:#4fc3f7">➕ 加邊</span>
+        進入連線模式（點兩個節點建立關係）。點 edge 編輯，按 <kbd>Delete</kbd> 刪除選取。
+        儲存後系統會自動為「家人」關係產生稱呼 alias。
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="ghost" onclick="relAddEdgeMode()">➕ 加邊</button>
+        <button class="ghost" onclick="relAutoLayout()">↻ 重排</button>
+        <button class="primary" onclick="relSave()">💾 儲存</button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="rel-layout">
+      <div class="rel-sidebar">
+        <h4>人臉群組（拖入畫布）</h4>
+        <input type="text" id="rel-search" placeholder="搜尋..." oninput="renderRelSidebar()"
+               style="width:100%;margin-bottom:8px">
+        <div id="rel-face-list"></div>
+      </div>
+      <div class="rel-canvas" id="rel-canvas-wrap">
+        <div class="rel-toolbar" id="rel-toolbar"></div>
+        <div id="cy"></div>
+        <div class="hint" id="rel-hint" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Edge editor dialog -->
+<div class="rel-dialog" id="rel-edge-dialog">
+  <div class="box">
+    <h3 id="rel-edge-title">編輯關係</h3>
+    <div class="row">
+      <label>類型（"from 是 to 的 ___"）</label>
+      <select id="rel-edge-type"></select>
+    </div>
+    <div class="row">
+      <label>覆寫：to 從 from 角度的稱呼（留空用預設）</label>
+      <input type="text" id="rel-edge-alias-from" placeholder="例：兒子">
+    </div>
+    <div class="row">
+      <label>覆寫：from 從 to 角度的稱呼（留空用預設）</label>
+      <input type="text" id="rel-edge-alias-to" placeholder="例：爸爸">
+    </div>
+    <div class="footer">
+      <button class="danger" onclick="relEdgeDelete()">刪除</button>
+      <div>
+        <button class="ghost" onclick="relEdgeCancel()">取消</button>
+        <button class="primary" onclick="relEdgeSave()">確定</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -239,6 +324,7 @@ function switchTab(t){
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active', p.id==='panel-'+t));
   if(t==='groups'){ renderGroups(); }
+  if(t==='rels'){ relInit(); }
 }
 
 // ---- USERS ----
@@ -413,6 +499,264 @@ function deleteGroup(name){
   api('POST','/api/admin/groups/'+encodeURIComponent(name),{action:'delete'}).then(r=>{
     if(r.ok){ showMsg('✓ 已刪除群組 '+name, true); loadAll(); }
     else showMsg(r.error||'刪除失敗', false);
+  });
+}
+
+// ---- RELATIONSHIP GRAPH ----
+let cy = null;
+let relGraph = {nodes:[], edges:[]};
+let relFamilyTypes = [];
+let relNonFamilyTypes = [];
+let relAddEdgeFirstNode = null;   // when in add-edge mode, holds the first clicked node id
+let relEditingEdgeId = null;      // edge id currently in dialog
+let relPendingNewEdge = null;     // {source, target} captured before dialog opens
+
+function faceById(fid){ return FACES.find(f=>f.id===fid); }
+
+function relInit(){
+  // load graph + types from backend; faces come from FACES (already loaded)
+  fetch('/api/admin/relationship-graph').then(r=>r.json()).then(d=>{
+    relGraph = d.graph || {nodes:[], edges:[]};
+    relFamilyTypes = d.family_types || [];
+    relNonFamilyTypes = d.non_family_types || [];
+    renderRelSidebar();
+    relRenderCanvas();
+  });
+}
+
+function renderRelSidebar(){
+  const q = ($('rel-search').value || '').toLowerCase();
+  const inGraph = new Set(relGraph.nodes);
+  const html = FACES
+    .filter(f => !q || (f.name||'').toLowerCase().includes(q) || f.id.includes(q))
+    .map(f => {
+      const cls = 'rel-face' + (inGraph.has(f.id)?' in-graph':'');
+      return `<div class="${cls}" data-fid="${escapeHtml(f.id)}"
+                onclick="relAddNode('${escapeHtml(f.id)}')">
+        <img src="/thumb/${escapeHtml(f.id)}.jpg?v=${f.thumb_ver}" loading="lazy">
+        <div class="n">${escapeHtml(f.name)}<span class="fid">${escapeHtml(f.id)}</span></div>
+      </div>`;
+    }).join('');
+  $('rel-face-list').innerHTML = html || '<div class="muted">（無命名的人臉群組）</div>';
+}
+
+function relAddNode(fid){
+  if(relGraph.nodes.includes(fid)) return;
+  relGraph.nodes.push(fid);
+  renderRelSidebar();
+  if(cy){
+    const f = faceById(fid);
+    cy.add({data:{id:fid, label:f?f.name:fid, thumb:`/thumb/${fid}.jpg?v=${f?f.thumb_ver:0}`}});
+    relAutoLayout();
+  }
+}
+
+function relRemoveNode(fid){
+  relGraph.nodes = relGraph.nodes.filter(n=>n!==fid);
+  relGraph.edges = relGraph.edges.filter(e=>e.from!==fid && e.to!==fid);
+  renderRelSidebar();
+  if(cy){
+    cy.$('#'+CSS.escape(fid)).remove();
+  }
+}
+
+function relRenderCanvas(){
+  const els = [];
+  for(const fid of relGraph.nodes){
+    const f = faceById(fid);
+    els.push({group:'nodes', data:{id:fid, label:f?f.name:fid, thumb:`/thumb/${fid}.jpg?v=${f?f.thumb_ver:0}`}});
+  }
+  relGraph.edges.forEach((e, i) => {
+    els.push({group:'edges', data:{
+      id:'e'+i, source:e.from, target:e.to, label:e.type,
+      family: relFamilyTypes.includes(e.type) ? '1' : '0',
+    }});
+  });
+
+  if(cy){ cy.destroy(); }
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements: els,
+    style: [
+      {selector:'node', style:{
+        'background-image':'data(thumb)',
+        'background-fit':'cover cover',
+        'background-color':'#222',
+        'border-width':2, 'border-color':'#4fc3f7',
+        'label':'data(label)', 'color':'#e0e0e0',
+        'font-size':11, 'text-valign':'bottom', 'text-margin-y':6,
+        'text-outline-width':2, 'text-outline-color':'#111',
+        'width':60, 'height':60, 'shape':'ellipse',
+      }},
+      {selector:'node:selected', style:{'border-color':'#ffeb3b', 'border-width':4}},
+      {selector:'edge', style:{
+        'width':2, 'line-color':'#666', 'curve-style':'bezier',
+        'target-arrow-shape':'triangle', 'target-arrow-color':'#666',
+        'label':'data(label)', 'color':'#9cc', 'font-size':10,
+        'text-rotation':'autorotate', 'text-margin-y':-8,
+        'text-outline-width':2, 'text-outline-color':'#111',
+      }},
+      {selector:'edge[family = "1"]', style:{'line-color':'#4fc3f7', 'target-arrow-color':'#4fc3f7', 'color':'#9cf'}},
+      {selector:'edge:selected', style:{'line-color':'#ffeb3b', 'target-arrow-color':'#ffeb3b', 'width':3}},
+    ],
+    layout:{name:'cose', animate:false, idealEdgeLength:120, nodeRepulsion:8000},
+  });
+
+  cy.on('tap', 'node', evt => {
+    if(relAddEdgeFirstNode === null) return;       // 非加邊模式 → 不做事
+    const id = evt.target.id();
+    if(relAddEdgeFirstNode === ''){                // 第一次點
+      relAddEdgeFirstNode = id;
+      cy.$('#'+CSS.escape(id)).addClass('source-pick');
+      relHint(`從 <b>${faceLabel(id)}</b> 出發，再點目標節點`);
+    } else if(relAddEdgeFirstNode !== id){         // 第二次點
+      relPendingNewEdge = {source: relAddEdgeFirstNode, target: id};
+      relAddEdgeFirstNode = null;
+      document.body.classList.remove('adding-edge');
+      relHint('');
+      relOpenEdgeDialog(null);   // null = new edge
+    }
+  });
+
+  cy.on('tap', 'edge', evt => {
+    if(relAddEdgeFirstNode !== null) return;
+    const eid = evt.target.id();
+    const idx = parseInt(eid.slice(1));            // 'eNN' → NN
+    relEditingEdgeId = idx;
+    relOpenEdgeDialog(relGraph.edges[idx]);
+  });
+
+  cy.on('tap', evt => {
+    if(evt.target === cy && relAddEdgeFirstNode !== null){
+      // 點到空白 → 取消加邊模式
+      relAddEdgeFirstNode = null;
+      document.body.classList.remove('adding-edge');
+      relHint('');
+    }
+  });
+
+  // Delete key removes selected node or edge
+  document.addEventListener('keydown', relKeydownHandler);
+}
+
+function relKeydownHandler(e){
+  if(e.key !== 'Delete' && e.key !== 'Backspace') return;
+  if(document.activeElement && ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
+  if(!cy) return;
+  const sel = cy.$(':selected');
+  if(sel.length === 0) return;
+  sel.forEach(el => {
+    if(el.isNode()){
+      if(confirm(`刪除節點「${faceLabel(el.id())}」？所有相關連線也會被移除。`)){
+        relRemoveNode(el.id());
+      }
+    } else if(el.isEdge()){
+      const idx = parseInt(el.id().slice(1));
+      relGraph.edges.splice(idx, 1);
+      relRenderCanvas();
+    }
+  });
+}
+
+function faceLabel(fid){
+  const f = faceById(fid);
+  return f ? f.name : fid;
+}
+
+function relHint(html){
+  const h = $('rel-hint');
+  if(!html){ h.style.display='none'; return; }
+  h.innerHTML = html;
+  h.style.display = 'block';
+}
+
+function relAddEdgeMode(){
+  if(relGraph.nodes.length < 2){ showMsg('請先加 2 個節點再連線', false); return; }
+  relAddEdgeFirstNode = '';
+  document.body.classList.add('adding-edge');
+  relHint('連線模式：先點起始節點，再點目標節點。點空白處取消');
+}
+
+function relAutoLayout(){
+  if(!cy) return;
+  cy.layout({name:'cose', animate:true, idealEdgeLength:120, nodeRepulsion:8000}).run();
+}
+
+function relOpenEdgeDialog(edge){
+  const sel = $('rel-edge-type');
+  // 填類型下拉
+  const allTypes = [...relFamilyTypes, ...relNonFamilyTypes];
+  sel.innerHTML = allTypes.map(t => {
+    const fam = relFamilyTypes.includes(t);
+    return `<option value="${escapeHtml(t)}">${escapeHtml(t)}${fam?' (家人)':''}</option>`;
+  }).join('') + '<option value="__custom__">自訂...</option>';
+  let title;
+  if(edge){
+    sel.value = relFamilyTypes.includes(edge.type) || relNonFamilyTypes.includes(edge.type) ? edge.type : '__custom__';
+    title = `編輯：${faceLabel(edge.from)} → ${faceLabel(edge.to)}`;
+    $('rel-edge-alias-from').value = edge.alias_from || '';
+    $('rel-edge-alias-to').value = edge.alias_to || '';
+  } else if(relPendingNewEdge){
+    sel.value = relFamilyTypes[0] || '__custom__';
+    title = `新增：${faceLabel(relPendingNewEdge.source)} → ${faceLabel(relPendingNewEdge.target)}`;
+    $('rel-edge-alias-from').value = '';
+    $('rel-edge-alias-to').value = '';
+  }
+  $('rel-edge-title').textContent = title;
+  $('rel-edge-dialog').classList.add('active');
+}
+
+function relEdgeSave(){
+  let typ = $('rel-edge-type').value;
+  if(typ === '__custom__'){
+    typ = prompt('自訂類型名稱：');
+    if(!typ) return;
+    typ = typ.trim();
+    if(!typ) return;
+  }
+  const af = $('rel-edge-alias-from').value.trim();
+  const at = $('rel-edge-alias-to').value.trim();
+  if(relEditingEdgeId !== null){
+    const e = relGraph.edges[relEditingEdgeId];
+    e.type = typ;
+    if(af) e.alias_from = af; else delete e.alias_from;
+    if(at) e.alias_to = at; else delete e.alias_to;
+  } else if(relPendingNewEdge){
+    const e = {from: relPendingNewEdge.source, to: relPendingNewEdge.target, type: typ};
+    if(af) e.alias_from = af;
+    if(at) e.alias_to = at;
+    relGraph.edges.push(e);
+  }
+  relEditingEdgeId = null;
+  relPendingNewEdge = null;
+  $('rel-edge-dialog').classList.remove('active');
+  relRenderCanvas();
+}
+
+function relEdgeDelete(){
+  if(relEditingEdgeId === null){
+    $('rel-edge-dialog').classList.remove('active');
+    return;
+  }
+  relGraph.edges.splice(relEditingEdgeId, 1);
+  relEditingEdgeId = null;
+  $('rel-edge-dialog').classList.remove('active');
+  relRenderCanvas();
+}
+
+function relEdgeCancel(){
+  relEditingEdgeId = null;
+  relPendingNewEdge = null;
+  $('rel-edge-dialog').classList.remove('active');
+}
+
+function relSave(){
+  api('POST', '/api/admin/relationship-graph', relGraph).then(r => {
+    if(r.ok){
+      showMsg(`✓ 已儲存：${r.nodes} 節點、${r.edges} 邊、產出 ${r.aliases} 個 alias`, true);
+    } else {
+      showMsg(r.error || '儲存失敗', false);
+    }
   });
 }
 
