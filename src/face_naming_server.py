@@ -1129,13 +1129,13 @@ class Handler(SimpleHTTPRequestHandler):
             page = int(qs.get("page", [0])[0])
             flt = qs.get("filter", ["all"])[0]
             kind = qs.get("kind", ["face"])[0]
-            if kind not in KIND_PATHS: kind = "face"
+            if kind not in KIND_PATHS and kind != "all": kind = "face"
             self.json_response(self.get_page(page, flt, kind=kind))
 
         elif path == "/api/clusters":
             # 輕量列表，給合併下拉選單用
             kind = qs.get("kind", ["face"])[0]
-            if kind not in KIND_PATHS: kind = "face"
+            if kind not in KIND_PATHS and kind != "all": kind = "face"
             data = self.get_all_sorted("all", kind=kind)
             self.json_response([
                 {"id": r["id"], "name": r["name"], "count": r["count"]}
@@ -1144,12 +1144,13 @@ class Handler(SimpleHTTPRequestHandler):
 
         elif path == "/api/stats":
             kind = qs.get("kind", ["face"])[0]
-            if kind not in KIND_PATHS: kind = "face"
+            if kind not in KIND_PATHS and kind != "all": kind = "face"
             self.json_response(self.get_stats(kind=kind))
 
         elif path == "/api/cluster_meta":
             fid = qs.get("fid", [""])[0]
             kind = qs.get("kind", ["face"])[0]
+            # 單一 cluster 必須是 face 或 pet；"all" 不合理 → fallback face
             if kind not in KIND_PATHS: kind = "face"
             self.json_response(self.get_cluster_meta(fid, kind=kind))
 
