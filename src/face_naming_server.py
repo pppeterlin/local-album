@@ -19,19 +19,50 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _paths import PROJECT_ROOT as PROJECT_DIR, FACES_DIR  # noqa: E402
+from _paths import PROJECT_ROOT as PROJECT_DIR, FACES_DIR, PETS_DIR  # noqa: E402
 import _auth  # noqa: E402
 
-FACES_FILE = FACES_DIR / "face_clusters.json"
-NAMES_FILE = FACES_DIR / "face_names.json"
-REMOVED_FILE = FACES_DIR / "face_removed.json"
-SKIPPED_FILE = FACES_DIR / "face_skipped.json"
-MERGES_FILE = FACES_DIR / "face_merges.json"
-MOVES_FILE = FACES_DIR / "face_moves.json"
-THUMB_OVERRIDES_FILE = FACES_DIR / "face_thumb_overrides.json"
-THUMBS_DIR = FACES_DIR / "face_thumbs"
+# File path sets per kind ("face" | "pet"). Both share the same on-disk
+# schema (clusters / names / merges / moves / removed / skipped / thumb
+# overrides + a thumbs directory). Pets live under METADATA_DIR/pets/.
+KIND_PATHS = {
+    "face": {
+        "clusters": FACES_DIR / "face_clusters.json",
+        "names": FACES_DIR / "face_names.json",
+        "removed": FACES_DIR / "face_removed.json",
+        "skipped": FACES_DIR / "face_skipped.json",
+        "merges": FACES_DIR / "face_merges.json",
+        "moves": FACES_DIR / "face_moves.json",
+        "thumb_overrides": FACES_DIR / "face_thumb_overrides.json",
+        "thumbs": FACES_DIR / "face_thumbs",
+        "id_prefix": "face",
+    },
+    "pet": {
+        "clusters": PETS_DIR / "pet_clusters.json",
+        "names": PETS_DIR / "pet_names.json",
+        "removed": PETS_DIR / "pet_removed.json",
+        "skipped": PETS_DIR / "pet_skipped.json",
+        "merges": PETS_DIR / "pet_merges.json",
+        "moves": PETS_DIR / "pet_moves.json",
+        "thumb_overrides": PETS_DIR / "pet_thumb_overrides.json",
+        "thumbs": PETS_DIR / "pet_thumbs",
+        "id_prefix": "pet",
+    },
+}
+
+# 圖片縮圖 cache 兩種共用（縮圖跟分類無關）
 IMG_THUMB_CACHE = FACES_DIR / "img_thumb_cache"
 PAGE_SIZE = 20
+
+# --- backward-compat aliases (face) — old code paths still reference these names
+FACES_FILE = KIND_PATHS["face"]["clusters"]
+NAMES_FILE = KIND_PATHS["face"]["names"]
+REMOVED_FILE = KIND_PATHS["face"]["removed"]
+SKIPPED_FILE = KIND_PATHS["face"]["skipped"]
+MERGES_FILE = KIND_PATHS["face"]["merges"]
+MOVES_FILE = KIND_PATHS["face"]["moves"]
+THUMB_OVERRIDES_FILE = KIND_PATHS["face"]["thumb_overrides"]
+THUMBS_DIR = KIND_PATHS["face"]["thumbs"]
 
 
 def load_json(path, default=None):
@@ -44,30 +75,52 @@ def save_json(path, data):
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
 
-def load_faces():   return load_json(FACES_FILE)
-def load_names():   return load_json(NAMES_FILE)
-def load_removed(): return load_json(REMOVED_FILE, {})
-def load_skipped(): return load_json(SKIPPED_FILE, [])
-def load_merges():  return load_json(MERGES_FILE, {})
-def load_moves():   return load_json(MOVES_FILE, [])
-def save_names(n):  save_json(NAMES_FILE, n)
-def save_removed(r): save_json(REMOVED_FILE, r)
-def save_skipped(s): save_json(SKIPPED_FILE, s)
-def save_merges(m): save_json(MERGES_FILE, m)
-def save_moves(m):  save_json(MOVES_FILE, m)
+# Kind-aware loaders (kind="face" | "pet"). face_naming_server originally
+# was face-only with global FACES_FILE/etc.; we keep the old wrappers as
+# face-specific aliases so legacy code paths keep working.
+def load_clusters(kind):   return load_json(KIND_PATHS[kind]["clusters"])
+def load_names_k(kind):    return load_json(KIND_PATHS[kind]["names"])
+def load_removed_k(kind):  return load_json(KIND_PATHS[kind]["removed"], {})
+def load_skipped_k(kind):  return load_json(KIND_PATHS[kind]["skipped"], [])
+def load_merges_k(kind):   return load_json(KIND_PATHS[kind]["merges"], {})
+def load_moves_k(kind):    return load_json(KIND_PATHS[kind]["moves"], [])
+def save_names_k(kind, n):   save_json(KIND_PATHS[kind]["names"], n)
+def save_removed_k(kind, r): save_json(KIND_PATHS[kind]["removed"], r)
+def save_skipped_k(kind, s): save_json(KIND_PATHS[kind]["skipped"], s)
+def save_merges_k(kind, m):  save_json(KIND_PATHS[kind]["merges"], m)
+def save_moves_k(kind, m):   save_json(KIND_PATHS[kind]["moves"], m)
+
+# Face-specific aliases (legacy)
+def load_faces():   return load_clusters("face")
+def load_names():   return load_names_k("face")
+def load_removed(): return load_removed_k("face")
+def load_skipped(): return load_skipped_k("face")
+def load_merges():  return load_merges_k("face")
+def load_moves():   return load_moves_k("face")
+def save_names(n):   save_names_k("face", n)
+def save_removed(r): save_removed_k("face", r)
+def save_skipped(s): save_skipped_k("face", s)
+def save_merges(m):  save_merges_k("face", m)
+def save_moves(m):   save_moves_k("face", m)
 
 
-def _next_user_face_id(faces, moves) -> str:
-    """產生下一個 user-created face id (`face_u1`, `face_u2`, ...)，避開既有 cluster 與既有 moves target。"""
-    existing = set((faces.get("clusters") or {}).keys())
+def _next_user_id(clusters_data, moves, kind: str = "face") -> str:
+    """產生下一個 user-created id（face_uN / pet_uN）。避開既有 cluster 與 moves target。"""
+    prefix = KIND_PATHS[kind]["id_prefix"]
+    existing = set((clusters_data.get("clusters") or {}).keys())
     for m in moves:
         t = m.get("to", "")
         if t:
             existing.add(t)
     n = 1
-    while f"face_u{n}" in existing:
+    while f"{prefix}_u{n}" in existing:
         n += 1
-    return f"face_u{n}"
+    return f"{prefix}_u{n}"
+
+
+def _next_user_face_id(faces, moves) -> str:
+    """Legacy alias for face kind."""
+    return _next_user_id(faces, moves, "face")
 
 
 SKIP_PATH_FRAGMENTS = (
@@ -1026,13 +1079,19 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_error(403); return
             self.serve_file(img, "image/jpeg")
 
-        elif path.startswith("/thumb/"):
-            # face cluster thumbnail; only allowed for clusters the user can see
-            fid_filename = unquote(path[7:])
+        elif path.startswith("/thumb/") or path.startswith("/pet_thumb/"):
+            # cluster thumbnail; face by default, /pet_thumb/ for pet kind.
+            # 寵物 cluster 對所有 viewer 公開，face 仍受 _can_see_cluster 規範。
+            if path.startswith("/pet_thumb/"):
+                fid_filename = unquote(path[len("/pet_thumb/"):])
+                kind = "pet"
+            else:
+                fid_filename = unquote(path[len("/thumb/"):])
+                kind = "face"
             fid = fid_filename.rsplit(".", 1)[0]
-            if not self._can_see_cluster(fid):
+            if kind == "face" and not self._can_see_cluster(fid):
                 self.send_error(403); return
-            thumb = THUMBS_DIR / fid_filename
+            thumb = KIND_PATHS[kind]["thumbs"] / fid_filename
             self.serve_file(thumb, "image/jpeg")
 
         elif path.startswith("/img_thumb/"):
@@ -1049,22 +1108,30 @@ class Handler(SimpleHTTPRequestHandler):
         elif path == "/api/page":
             page = int(qs.get("page", [0])[0])
             flt = qs.get("filter", ["all"])[0]
-            self.json_response(self.get_page(page, flt))
+            kind = qs.get("kind", ["face"])[0]
+            if kind not in KIND_PATHS: kind = "face"
+            self.json_response(self.get_page(page, flt, kind=kind))
 
         elif path == "/api/clusters":
             # 輕量列表，給合併下拉選單用
-            data = self.get_all_sorted("all")
+            kind = qs.get("kind", ["face"])[0]
+            if kind not in KIND_PATHS: kind = "face"
+            data = self.get_all_sorted("all", kind=kind)
             self.json_response([
                 {"id": r["id"], "name": r["name"], "count": r["count"]}
                 for r in data
             ])
 
         elif path == "/api/stats":
-            self.json_response(self.get_stats())
+            kind = qs.get("kind", ["face"])[0]
+            if kind not in KIND_PATHS: kind = "face"
+            self.json_response(self.get_stats(kind=kind))
 
         elif path == "/api/cluster_meta":
             fid = qs.get("fid", [""])[0]
-            self.json_response(self.get_cluster_meta(fid))
+            kind = qs.get("kind", ["face"])[0]
+            if kind not in KIND_PATHS: kind = "face"
+            self.json_response(self.get_cluster_meta(fid, kind=kind))
 
         else:
             self.send_error(404)
@@ -1112,119 +1179,122 @@ class Handler(SimpleHTTPRequestHandler):
         if not self._require_admin():
             return
 
+        # body 帶 kind 表示對 face 或 pet 動作（向下相容，預設 face）
+        kind = body.get("kind") or "face"
+        if kind not in KIND_PATHS:
+            kind = "face"
+
         if path == "/api/name":
-            names = load_names()
+            names = load_names_k(kind)
             fid, name = body.get("face_id"), body.get("name", "")
             if fid and name:
                 names[fid] = name
             elif fid and fid in names:
                 del names[fid]
-            save_names(names)
+            save_names_k(kind, names)
             self.json_response({"ok": True})
 
         elif path == "/api/skip":
-            skipped = load_skipped()
+            skipped = load_skipped_k(kind)
             fid = body.get("face_id")
             if fid:
                 if fid in skipped:
                     skipped.remove(fid)
                 else:
                     skipped.append(fid)
-            save_skipped(skipped)
+            save_skipped_k(kind, skipped)
             self.json_response({"ok": True, "skipped": fid in skipped})
 
         elif path == "/api/merge":
-            merges = load_merges()
-            names = load_names()
+            merges = load_merges_k(kind)
+            names = load_names_k(kind)
             src, tgt = body.get("source_id"), body.get("target_id")
             if src and tgt and src != tgt:
                 final = _resolve_target(merges, tgt)
                 if final != src:
                     merges[src] = final
-                    save_merges(merges)
-                    # 命名傳遞：source 也採用 target 的名字（讓 photo_index 重建後一致）
+                    save_merges_k(kind, merges)
                     if final in names:
                         names[src] = names[final]
-                        save_names(names)
+                        save_names_k(kind, names)
             self.json_response({"ok": True})
 
         elif path == "/api/unmerge":
-            merges = load_merges()
+            merges = load_merges_k(kind)
             fid = body.get("face_id")
             if fid and fid in merges:
                 del merges[fid]
-                save_merges(merges)
+                save_merges_k(kind, merges)
             self.json_response({"ok": True})
 
         elif path == "/api/remove":
-            removed = load_removed()
+            removed = load_removed_k(kind)
             fid, img_path = body.get("face_id"), body.get("image_path")
             if fid and img_path:
                 removed.setdefault(fid, [])
                 if img_path not in removed[fid]:
                     removed[fid].append(img_path)
-                save_removed(removed)
+                save_removed_k(kind, removed)
             self.json_response({"ok": True})
 
         elif path == "/api/restore":
-            removed = load_removed()
+            removed = load_removed_k(kind)
             fid, img_path = body.get("face_id"), body.get("image_path")
             if fid and img_path and fid in removed and img_path in removed[fid]:
                 removed[fid].remove(img_path)
-                save_removed(removed)
+                save_removed_k(kind, removed)
             self.json_response({"ok": True})
 
         elif path == "/api/move":
-            moves = load_moves()
+            moves = load_moves_k(kind)
             from_id = body.get("from_id")
             to_id = body.get("to_id")
             img_path = body.get("image_path")
             new_name = (body.get("new_name") or "").strip()
             if to_id == "__new__":
-                to_id = _next_user_face_id(load_faces(), moves)
+                to_id = _next_user_id(load_clusters(kind), moves, kind)
                 if new_name:
-                    names = load_names()
+                    names = load_names_k(kind)
                     names[to_id] = new_name
-                    save_names(names)
+                    save_names_k(kind, names)
             if from_id and to_id and img_path and from_id != to_id:
                 moves = [m for m in moves if m.get("path") != img_path]
                 moves.append({"path": img_path, "from": from_id, "to": to_id})
-                save_moves(moves)
+                save_moves_k(kind, moves)
             self.json_response({"ok": True, "to_id": to_id})
 
         elif path == "/api/unmove":
-            moves = load_moves()
+            moves = load_moves_k(kind)
             img_path = body.get("image_path")
             if img_path:
                 moves = [m for m in moves if m.get("path") != img_path]
-                save_moves(moves)
+                save_moves_k(kind, moves)
             self.json_response({"ok": True})
 
         elif path == "/api/move-batch":
-            moves = load_moves()
+            moves = load_moves_k(kind)
             from_id = body.get("from_id")
             to_id = body.get("to_id")
             paths = body.get("paths", [])
             new_name = (body.get("new_name") or "").strip()
-            # 特殊 sentinel：建立新群組，optional new_name 直接寫進 face_names.json
             if to_id == "__new__":
-                to_id = _next_user_face_id(load_faces(), moves)
+                to_id = _next_user_id(load_clusters(kind), moves, kind)
                 if new_name:
-                    names = load_names()
+                    names = load_names_k(kind)
                     names[to_id] = new_name
-                    save_names(names)
+                    save_names_k(kind, names)
             if from_id and to_id and paths and from_id != to_id:
                 ps = set(paths)
                 moves = [m for m in moves if m.get("path") not in ps]
                 for p in paths:
                     moves.append({"path": p, "from": from_id, "to": to_id})
-                save_moves(moves)
+                save_moves_k(kind, moves)
             self.json_response({"ok": True, "moved": len(paths), "to_id": to_id})
 
         elif path == "/api/set_thumb":
             fid = body.get("face_id")
             img_path = body.get("image_path")
-            result = self._set_custom_thumb(fid, img_path)
+            result = self._set_custom_thumb(fid, img_path, kind=kind)
             self.json_response(result)
 
         elif path == "/api/admin/users":
@@ -1325,11 +1395,11 @@ class Handler(SimpleHTTPRequestHandler):
 
     _MTIME_CACHE: dict = {}
 
-    def get_cluster_meta(self, fid: str) -> dict:
+    def get_cluster_meta(self, fid: str, kind: str = "face") -> dict:
         """為單一 cluster 的圖片回傳 mtime / 年 / 月，並按時間 desc 排序。"""
         if not fid:
             return {"id": fid, "images": [], "removed": []}
-        all_data = self.get_all_sorted("all")
+        all_data = self.get_all_sorted("all", kind=kind)
         target = next((c for c in all_data if c["id"] == fid), None)
         if not target:
             return {"id": fid, "images": [], "removed": []}
@@ -1373,51 +1443,78 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ---- thumb crop helper ----
 
-    def _set_custom_thumb(self, face_id: str, img_path: str) -> dict:
-        """裁切指定照片裡屬於 face_id (含合併源) 的人臉、覆寫 face_thumbs/<fid>.jpg"""
-        if not face_id or not img_path:
+    def _set_custom_thumb(self, fid: str, img_path: str, kind: str = "face") -> dict:
+        """裁切指定照片裡屬於 fid (含合併源) 的人臉/寵物、覆寫 thumbs/<fid>.jpg"""
+        if not fid or not img_path:
             return {"ok": False, "error": "missing face_id or image_path"}
         from pathlib import Path as _P
         if not _P(img_path).exists():
             return {"ok": False, "error": f"image not found: {img_path}"}
 
-        # 解析合併源（找出視覺上「同一個人」的所有 face_id）
-        merges = load_merges()
-        # 反查：哪些 source 合進這個 target
-        merged_in = {face_id}
-        for src, tgt in merges.items():
-            final = _resolve_target(merges, src)
-            if final == face_id:
+        # 解析合併源
+        merges = load_merges_k(kind)
+        merged_in = {fid}
+        for src in merges.keys():
+            if _resolve_target(merges, src) == fid:
                 merged_in.add(src)
 
-        # 在 face_clusters.images[img_path] 找對應的 face record
-        faces = load_faces()
-        rec = (faces.get("images", {}) or {}).get(img_path, [])
-        target_face = None
-        for f in rec:
-            if f.get("face_id") in merged_in:
-                target_face = f
+        # 在 clusters.images[img_path] 找對應的 record
+        clusters_data = load_clusters(kind) or {}
+        rec = (clusters_data.get("images", {}) or {}).get(img_path, [])
+        target_rec = None
+        id_key = "face_id" if kind == "face" else "pet_id"
+        for r in rec:
+            if r.get(id_key) in merged_in or r.get("face_id") in merged_in:  # 容錯
+                target_rec = r
                 break
-        if not target_face:
+        if not target_rec:
             return {"ok": False,
-                    "error": f"找不到屬於 {face_id} 的人臉於 {img_path}（可能是 face detector 沒偵測到）"}
+                    "error": f"找不到屬於 {fid} 的偵測於 {img_path}"}
 
-        # 裁切
-        try:
-            from generate_face_thumbs import crop_face_thumb
-        except ImportError:
-            return {"ok": False, "error": "無法載入 crop_face_thumb"}
-
-        out_path = THUMBS_DIR / f"{face_id}.jpg"
-        ok = crop_face_thumb(img_path, target_face["bbox"], out_path)
+        # 裁切（face 用 generate_face_thumbs，pet 用 OpenCV 直接 crop）
+        out_path = KIND_PATHS[kind]["thumbs"] / f"{fid}.jpg"
+        if kind == "face":
+            try:
+                from generate_face_thumbs import crop_face_thumb
+            except ImportError:
+                return {"ok": False, "error": "無法載入 crop_face_thumb"}
+            ok = crop_face_thumb(img_path, target_rec["bbox"], out_path)
+        else:
+            ok = self._crop_pet_thumb(img_path, target_rec["bbox"], out_path)
         if not ok:
             return {"ok": False, "error": "裁切失敗（圖檔損壞或 bbox 無效）"}
 
         # 記錄手動指定
-        overrides = load_json(THUMB_OVERRIDES_FILE, {})
-        overrides[face_id] = img_path
-        save_json(THUMB_OVERRIDES_FILE, overrides)
+        overrides_file = KIND_PATHS[kind]["thumb_overrides"]
+        overrides = load_json(overrides_file, {})
+        overrides[fid] = img_path
+        save_json(overrides_file, overrides)
         return {"ok": True, "thumb_path": str(out_path), "image_path": img_path}
+
+    @staticmethod
+    def _crop_pet_thumb(img_path: str, bbox: list, out_path) -> bool:
+        """簡單的 bbox crop（沒有 face alignment），給寵物用。"""
+        try:
+            import cv2
+            img = cv2.imread(img_path)
+            if img is None:
+                return False
+            x1, y1, x2, y2 = [int(v) for v in bbox]
+            h, w = img.shape[:2]
+            x1, x2 = max(0, x1), min(w, x2)
+            y1, y2 = max(0, y1), min(h, y2)
+            if x2 <= x1 or y2 <= y1:
+                return False
+            crop = img[y1:y2, x1:x2]
+            ch, cw = crop.shape[:2]
+            if max(ch, cw) > 256:
+                s = 256 / max(ch, cw)
+                crop = cv2.resize(crop, (int(cw * s), int(ch * s)))
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(out_path), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            return True
+        except Exception:  # noqa: BLE001
+            return False
 
     # ---- admin: users / groups / visibility helpers ----
 
@@ -1645,14 +1742,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ---- data assembly ----
 
-    def get_all_sorted(self, flt):
-        faces = load_faces()
-        names = load_names()
-        removed = load_removed()
-        skipped = set(load_skipped())
-        merges = load_merges()
-        moves = load_moves()
+    def get_all_sorted(self, flt, kind: str = "face"):
+        faces = load_clusters(kind) or {}
+        names = load_names_k(kind)
+        removed = load_removed_k(kind)
+        skipped = set(load_skipped_k(kind))
+        merges = load_merges_k(kind)
+        moves = load_moves_k(kind)
         clusters = faces.get("clusters", {})
+        thumbs_dir = KIND_PATHS[kind]["thumbs"]
 
         # 反查：每個最終 target 收哪些 source
         merge_back: dict[str, list[str]] = defaultdict(list)
@@ -1674,7 +1772,7 @@ class Handler(SimpleHTTPRequestHandler):
                 moves_in[t_final].append(p)
 
         def _thumb_ver(fid: str) -> int:
-            f = THUMBS_DIR / f"{fid}.jpg"
+            f = thumbs_dir / f"{fid}.jpg"
             return int(f.stat().st_mtime) if f.exists() else 0
 
         result = []
@@ -1775,69 +1873,81 @@ class Handler(SimpleHTTPRequestHandler):
         # 權限：非 admin 要過 cluster + per-image 雙層過濾
         perms = self._perms()
         if not perms["is_admin"]:
-            # 1) cluster：只留 allowed_faces 對應的（含本人 identity，已在 allowed_faces 裡）
-            result = [r for r in result if r["id"] in perms["allowed_faces"]]
+            if kind == "pet":
+                # 寵物全公開：所有 cluster 都看得到；
+                # per-image 只擋 blocked_paths（沒有「無人臉自動隱藏」這條規則）
+                def _ok_pet(path):
+                    return not _auth.path_blocked(path, perms["blocked_paths"])
+                filtered: list[dict] = []
+                for r in result:
+                    visible_imgs = [p for p in r["images"] if _ok_pet(p)]
+                    if not visible_imgs:
+                        continue
+                    r["images"] = visible_imgs
+                    r["count"] = len(visible_imgs)
+                    r["removed"] = [p for p in r["removed"] if _ok_pet(p)]
+                    filtered.append(r)
+                result = filtered
+            else:
+                # 人臉：套完整 can_see_photo 規則（含 identity 特權 / blocked_paths / 無臉=隱藏）
+                # 1) cluster：只留 allowed_faces 對應的（含本人 identity，已在 allowed_faces 裡）
+                result = [r for r in result if r["id"] in perms["allowed_faces"]]
 
-            # 2) per-image：用 _auth.can_see_photo 規則
-            #    - 本人在照片裡 → 顯示 (beats blocked_paths)
-            #    - 路徑被擋 → 隱藏
-            #    - 群組 allowed_faces 與照片人臉有交集 → 顯示
-            # 預先建 path -> 已解析的 face_id 清單（含 merges + moves）
-            img_to_faces: dict[str, list[str]] = {}
-            for img_path, recs in (faces.get("images") or {}).items():
-                img_to_faces[img_path] = [
-                    _resolve_target(merges, r.get("face_id", "")) for r in recs
-                ]
-            # 套用 moves：from_face → to_face per image
-            moves_per_path: dict[str, list[tuple[str, str]]] = defaultdict(list)
-            for m in moves:
-                p = m.get("path")
-                if not p:
-                    continue
-                f_final = _resolve_target(merges, m.get("from", ""))
-                t_final = _resolve_target(merges, m.get("to", ""))
-                moves_per_path[p].append((f_final, t_final))
+                # 2) per-image：用 _auth.can_see_photo 規則
+                img_to_faces: dict[str, list[str]] = {}
+                for img_path, recs in (faces.get("images") or {}).items():
+                    img_to_faces[img_path] = [
+                        _resolve_target(merges, r.get("face_id", "")) for r in recs
+                    ]
+                moves_per_path: dict[str, list[tuple[str, str]]] = defaultdict(list)
+                for m in moves:
+                    p = m.get("path")
+                    if not p:
+                        continue
+                    f_final = _resolve_target(merges, m.get("from", ""))
+                    t_final = _resolve_target(merges, m.get("to", ""))
+                    moves_per_path[p].append((f_final, t_final))
 
-            def _effective_faces(path: str) -> list[str]:
-                base = list(img_to_faces.get(path, []))
-                for f_final, t_final in moves_per_path.get(path, []):
-                    base = [t_final if fid == f_final else fid for fid in base]
-                return base
+                def _effective_faces(path: str) -> list[str]:
+                    base = list(img_to_faces.get(path, []))
+                    for f_final, t_final in moves_per_path.get(path, []):
+                        base = [t_final if fid == f_final else fid for fid in base]
+                    return base
 
-            filtered: list[dict] = []
-            for r in result:
-                visible_imgs = [
-                    p for p in r["images"]
-                    if _auth.can_see_photo(perms, p, _effective_faces(p))
-                ]
-                if not visible_imgs:
-                    continue
-                r["images"] = visible_imgs
-                r["count"] = len(visible_imgs)
-                r["removed"] = [
-                    p for p in r["removed"]
-                    if _auth.can_see_photo(perms, p, _effective_faces(p))
-                ]
-                filtered.append(r)
-            result = filtered
+                filtered = []
+                for r in result:
+                    visible_imgs = [
+                        p for p in r["images"]
+                        if _auth.can_see_photo(perms, p, _effective_faces(p))
+                    ]
+                    if not visible_imgs:
+                        continue
+                    r["images"] = visible_imgs
+                    r["count"] = len(visible_imgs)
+                    r["removed"] = [
+                        p for p in r["removed"]
+                        if _auth.can_see_photo(perms, p, _effective_faces(p))
+                    ]
+                    filtered.append(r)
+                result = filtered
 
         # 排序：未略過在前（依 count desc）、略過在後（依 count desc）
         result.sort(key=lambda r: (r["skipped"], -r["count"]))
         return result
 
-    def get_page(self, page, flt):
-        all_data = self.get_all_sorted(flt)
+    def get_page(self, page, flt, kind: str = "face"):
+        all_data = self.get_all_sorted(flt, kind=kind)
         total = len(all_data)
         total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
         page = max(0, min(page, total_pages - 1))
         start = page * PAGE_SIZE
         end = start + PAGE_SIZE
         items = all_data[start:end]
-        # 個人化顯示名稱：登入者的 identity 自動顯示為「我」，
-        # 其餘按 relationships.json 對應（例：mom 看 chun → 「兒子」）。
-        # 只在這條（瀏覽用）API 套用；管理用的 /api/clusters、/admin 仍給 canonical。
-        for r in items:
-            r["name"] = self._personalize_name(r["id"], r.get("name", ""))
+        # 個人化顯示名稱：只對人臉 cluster 套用 relationships.json
+        # （寵物的名字直接顯示 admin 設的稱呼，沒有 perspective alias）
+        if kind == "face":
+            for r in items:
+                r["name"] = self._personalize_name(r["id"], r.get("name", ""))
         return {
             "page": page,
             "page_size": PAGE_SIZE,
@@ -1846,12 +1956,12 @@ class Handler(SimpleHTTPRequestHandler):
             "items": items,
         }
 
-    def get_stats(self):
-        names = load_names()
-        skipped = load_skipped()
-        merges = load_merges()
-        faces = load_faces()
-        total = len(faces.get("clusters", {}))
+    def get_stats(self, kind: str = "face"):
+        names = load_names_k(kind)
+        skipped = load_skipped_k(kind)
+        merges = load_merges_k(kind)
+        clusters_data = load_clusters(kind) or {}
+        total = len(clusters_data.get("clusters", {}))
         perms = self._perms()
         if perms["is_admin"]:
             return {
@@ -1861,6 +1971,16 @@ class Handler(SimpleHTTPRequestHandler):
                 "skipped": len(skipped),
                 "merges": len(merges),
             }
+        if kind == "pet":
+            # 寵物全部 cluster 對 viewer 都公開
+            return {
+                "total": total,
+                "displayed": total - len(merges),
+                "named": len(names),
+                "skipped": 0,
+                "merges": 0,
+            }
+        # face viewer
         allowed = perms["allowed_faces"]
         return {
             "total": len(allowed),
@@ -1912,7 +2032,18 @@ function login(){
         user = self._user() or ""
         perms = self._perms()
         is_admin = "true" if perms["is_admin"] else "false"
-        inject = f"<script>window.CURRENT_USER='{user}';window.IS_ADMIN={is_admin};</script>"
+        # 偵測哪些 kind 有資料；UI 才會顯示對應的 toggle 按鈕
+        has_face = (FACES_DIR / "face_clusters.json").exists()
+        has_pet  = (PETS_DIR / "pet_clusters.json").exists()
+        inject = (
+            f"<script>"
+            f"window.CURRENT_USER='{user}';"
+            f"window.IS_ADMIN={is_admin};"
+            f"window.KIND='face';"
+            f"window.HAS_FACE={'true' if has_face else 'false'};"
+            f"window.HAS_PET={'true' if has_pet else 'false'};"
+            f"</script>"
+        )
         return self._generate_html_template().replace(
             "<!--USER_INJECT-->", inject)
 
@@ -1941,6 +2072,14 @@ h1{text-align:center;margin-bottom:6px}
 .toolbar button{padding:7px 14px;background:#222;color:#888;border:1px solid #333;border-radius:6px;cursor:pointer;font-size:13px;min-height:36px}
 .toolbar button:hover{background:#2a2a2a}
 .toolbar button.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
+.kind-toggle{display:flex;justify-content:center;gap:0;margin-bottom:14px}
+.kind-toggle button{padding:8px 18px;background:#1a1a1a;color:#888;border:1px solid #333;cursor:pointer;font-size:14px;min-height:40px}
+.kind-toggle button:first-child{border-radius:8px 0 0 8px}
+.kind-toggle button:last-child{border-radius:0 8px 8px 0;border-left:none}
+.kind-toggle button:hover{background:#2a2a2a;color:#ccc}
+.kind-toggle button.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
+/* 若某 kind 沒資料，整個 toggle 隱藏（避免讓 viewer 看到空 tab） */
+.kind-toggle.hidden{display:none}
 .admin-only{display:none}
 body.admin .admin-only{display:initial}
 body.admin .admin-only.flex{display:flex}
@@ -2094,6 +2233,11 @@ body:not(.admin) .tile .tcount{color:#666;font-size:12px;margin-top:3px}
 <h1 id="mainTitle">👥 家庭相簿</h1>
 <div class="subtitle admin-only" id="subtitle"></div>
 
+<div class="kind-toggle" id="kindToggle">
+  <button class="active" data-kind="face" onclick="setKind('face')">👥 人臉</button>
+  <button data-kind="pet" onclick="setKind('pet')">🐾 寵物</button>
+</div>
+
 <div class="toolbar admin-only">
   <button class="active" data-filter="all" onclick="setFilter('all')">全部</button>
   <button data-filter="unnamed" onclick="setFilter('unnamed')">未命名</button>
@@ -2193,6 +2337,23 @@ document.getElementById('whoami').textContent = window.CURRENT_USER || '(未登�
 document.getElementById('role-tag').textContent = window.IS_ADMIN ? '(admin)' : '(viewer · 唯讀)';
 if(window.IS_ADMIN){ document.body.classList.add('admin'); }
 
+// kind toggle 顯示邏輯：只有兩種 kind 都有資料時才顯示 toggle
+const kt = document.getElementById('kindToggle');
+if(kt){
+  const btnFace = kt.querySelector('[data-kind="face"]');
+  const btnPet  = kt.querySelector('[data-kind="pet"]');
+  if(btnFace) btnFace.style.display = window.HAS_FACE ? '' : 'none';
+  if(btnPet)  btnPet.style.display  = window.HAS_PET  ? '' : 'none';
+  if(!window.HAS_FACE && !window.HAS_PET) kt.classList.add('hidden');
+  if(!(window.HAS_FACE && window.HAS_PET)) kt.classList.add('hidden');  // 只有一種 → 不必顯示 toggle
+  // 預設 kind：face 有資料就用 face，否則 pet
+  if(!window.HAS_FACE && window.HAS_PET){
+    window.KIND = 'pet';
+    if(btnPet) btnPet.classList.add('active');
+    if(btnFace) btnFace.classList.remove('active');
+  }
+}
+
 function logout(){
   fetch('/api/logout',{method:'POST'}).then(()=>location.href='/login');
 }
@@ -2212,8 +2373,25 @@ document.addEventListener('keydown', e=>{
   }
 });
 
+// kind toggle
+function setKind(k){
+  if(k === window.KIND) return;
+  if(k === 'pet' && !window.HAS_PET){ return; }
+  if(k === 'face' && !window.HAS_FACE){ return; }
+  window.KIND = k;
+  document.querySelectorAll('.kind-toggle button').forEach(b => {
+    b.classList.toggle('active', b.dataset.kind === k);
+  });
+  // 切 kind 時清掉現有狀態並重載
+  ITEMS = [];
+  currentPage = 0;
+  document.getElementById('grid').innerHTML = '';
+  loadStats();
+  loadPage(0);
+}
+
 function loadStats(){
-  fetch('/api/stats').then(r=>r.json()).then(d=>{
+  fetch(kq('/api/stats')).then(r=>r.json()).then(d=>{
     document.getElementById('subtitle').textContent =
       `共 ${d.total} 個原始群組，合併後 ${d.displayed} 個可顯示`;
     document.getElementById('stats').innerHTML =
@@ -2226,7 +2404,7 @@ function loadStats(){
 function loadPage(page){
   document.getElementById('spinner').style.display = 'block';
   document.getElementById('grid').innerHTML = '';
-  return fetch(`/api/page?page=${page}&filter=${filter}`).then(r=>r.json()).then(d=>{
+  return fetch(kq(`/api/page?page=${page}&filter=${filter}`)).then(r=>r.json()).then(d=>{
     ITEMS = d.items;
     currentPage = d.page;
     totalPages = d.total_pages;
@@ -2276,7 +2454,7 @@ function renderListRow(c){
     </div>` : '<div></div>';
   return `
     <div class="list-row" id="row_${fid}">
-      <img class="lr-thumb" src="/thumb/${fid}.jpg?v=${c.thumb_v||0}" onerror="this.style.visibility='hidden'">
+      <img class="lr-thumb" src="${thumbUrl(fid, c.thumb_v)}" onerror="this.style.visibility='hidden'">
       <div class="lr-id">${fid}</div>
       <div class="lr-name" id="name_${fid}" ${nameClick}>${c.name}</div>
       <div class="lr-count">${c.count} 張</div>
@@ -2336,7 +2514,7 @@ function renderCard(c){
     return `
       <div class="tile" onclick="openExpand('${fid}')" role="button" tabindex="0"
            onkeydown="if(event.key==='Enter'||event.key===' ')openExpand('${fid}')">
-        <img class="avatar" src="/thumb/${fid}.jpg?v=${c.thumb_v||0}" alt="${label.replace(/"/g,'&quot;')}" loading="lazy" onerror="this.style.visibility='hidden'">
+        <img class="avatar" src="${thumbUrl(fid, c.thumb_v)}" alt="${label.replace(/"/g,'&quot;')}" loading="lazy" onerror="this.style.visibility='hidden'">
         <div class="tname">${label}</div>
       </div>`;
   }
@@ -2389,7 +2567,7 @@ function renderCard(c){
           <div class="count">${c.count} 張${c.count!==c.original_count?' (原 '+c.original_count+')':''}</div>
           ${mergedBadge}
         </div>
-        <img class="face-thumb" src="/thumb/${fid}.jpg?v=${c.thumb_v||0}" onerror="this.style.display='none'">
+        <img class="face-thumb" src="${thumbUrl(fid, c.thumb_v)}" onerror="this.style.display='none'">
       </div>
       <div class="photo-grid">${previewImgs}</div>
       <div class="expand-bar" onclick="openExpand('${fid}')">
@@ -2419,7 +2597,7 @@ function openExpand(fid){
   }
   document.getElementById('expandBody').innerHTML = '<div style="padding:30px;color:#888;text-align:center">載入中…</div>';
   document.getElementById('expandModal').classList.add('active');
-  fetch(`/api/cluster_meta?fid=${encodeURIComponent(fid)}`).then(r=>r.json()).then(meta=>{
+  fetch(kq(`/api/cluster_meta?fid=${encodeURIComponent(fid)}`)).then(r=>r.json()).then(meta=>{
     if(openExpandFid !== fid) return;
     openExpandMeta = meta;
     // 預設：只展開最新年度，其餘折疊。「無日期」也預設折疊。
@@ -2634,7 +2812,7 @@ function toggleYear(y){
 
 function refreshExpandMeta(){
   if(!openExpandFid) return Promise.resolve();
-  return fetch(`/api/cluster_meta?fid=${encodeURIComponent(openExpandFid)}`)
+  return fetch(kq(`/api/cluster_meta?fid=${encodeURIComponent(openExpandFid)}`))
     .then(r=>r.json()).then(meta=>{
       if(openExpandFid){ openExpandMeta = meta; renderExpandBody(); }
     });
@@ -2688,7 +2866,7 @@ function moveSelected(){
   document.getElementById('movePreview').innerHTML =
     `<div style="color:#4fc3f7;font-size:15px">批次移動 ${selectedPaths.size} 張</div>
      <div style="color:#888;font-size:12px;margin-top:4px">來自 ${moveSource}</div>`;
-  fetch('/api/clusters').then(r=>r.json()).then(list=>{
+  fetch(kq('/api/clusters')).then(r=>r.json()).then(list=>{
     allClusters = list.filter(c=>c.id !== moveSource);
     renderMoveOptions(allClusters);
     document.getElementById('moveModal').classList.add('active');
@@ -2733,7 +2911,7 @@ function openMerge(fid){
   mergeSource=fid;
   document.getElementById('mergeFilter').value='';
   // fetch 完整列表（按需）
-  fetch('/api/clusters').then(r=>r.json()).then(list=>{
+  fetch(kq('/api/clusters')).then(r=>r.json()).then(list=>{
     allClusters = list.filter(c=>c.id!==fid);
     renderMergeOptions(allClusters);
     document.getElementById('mergeModal').classList.add('active');
@@ -2777,7 +2955,7 @@ function openMove(fid, imgPath){
   document.getElementById('movePreview').innerHTML =
     `<img src="/img_thumb/${imgPath}?w=300" style="max-height:140px;border-radius:6px;border:2px solid #333">
      <div style="color:#888;font-size:12px;margin-top:6px">來自 ${fid}</div>`;
-  fetch('/api/clusters').then(r=>r.json()).then(list=>{
+  fetch(kq('/api/clusters')).then(r=>r.json()).then(list=>{
     allClusters = list.filter(c=>c.id !== fid);
     renderMoveOptions(allClusters);
     document.getElementById('moveModal').classList.add('active');
@@ -2845,14 +3023,15 @@ function setAsThumb(fid, img){
     body: JSON.stringify({face_id: fid, image_path: img})
   }).then(r=>r.json()).then(d=>{
     if(!d.ok){ alert('設定失敗：' + (d.error || '未知錯誤')); return; }
-    // cache-bust 換新的縮圖
+    // cache-bust 換新的縮圖 (face or pet kind 視 window.KIND 而定)
     const ts = Date.now();
-    document.querySelectorAll(`img.face-thumb[src*="/thumb/${fid}.jpg"]`).forEach(el=>{
-      el.src = `/thumb/${fid}.jpg?t=${ts}`;
+    const fresh = thumbUrl(fid, ts);
+    const base = (window.KIND === 'pet') ? '/pet_thumb/' : '/thumb/';
+    document.querySelectorAll(`img.face-thumb[src*="${base}${fid}.jpg"]`).forEach(el=>{
+      el.src = fresh;
     });
-    // expand modal 內也可能有 face thumb（暫時沒，但 face naming 卡片有）
-    const lrThumb = document.querySelector(`.lr-thumb[src*="/thumb/${fid}.jpg"]`);
-    if(lrThumb) lrThumb.src = `/thumb/${fid}.jpg?t=${ts}`;
+    const lrThumb = document.querySelector(`.lr-thumb[src*="${base}${fid}.jpg"]`);
+    if(lrThumb) lrThumb.src = fresh;
   });
 }
 
@@ -2900,7 +3079,23 @@ function setFilter(f){
 }
 
 function post(url,data){
-  return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  // 自動帶上目前的 KIND（face / pet），讓所有 admin mutation 落到對的檔案
+  const payload = (window.KIND && data && typeof data === 'object' && !data.kind)
+    ? {...data, kind: window.KIND} : data;
+  return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+}
+
+// 在 URL 加上 kind 參數（給 GET 用）
+function kq(url){
+  if(!window.KIND || window.KIND === 'face') return url;   // 預設 face 不必加，向下相容
+  const sep = url.includes('?') ? '&' : '?';
+  return url + sep + 'kind=' + encodeURIComponent(window.KIND);
+}
+
+// 取得 cluster 縮圖路徑（依 kind 選 face / pet thumb endpoint）
+function thumbUrl(fid, ver){
+  const base = (window.KIND === 'pet') ? '/pet_thumb/' : '/thumb/';
+  return base + encodeURIComponent(fid) + '.jpg?v=' + (ver || 0);
 }
 </script>
 </body>
