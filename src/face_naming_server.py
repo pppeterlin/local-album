@@ -1821,7 +1821,13 @@ class Handler(SimpleHTTPRequestHandler):
             for r in pet_items:
                 r["kind"] = "pet"
             combined = face_items + pet_items
-            combined.sort(key=lambda r: (r["skipped"], -r["count"]))
+            identity = self._perms().get("identity") or ""
+            # 登入者自己 (identity) 的 cluster 排第一
+            combined.sort(key=lambda r: (
+                r["skipped"],
+                not (identity and r["id"] == identity),
+                -r["count"],
+            ))
             return combined
 
         faces = load_clusters(kind) or {}
@@ -2026,8 +2032,13 @@ class Handler(SimpleHTTPRequestHandler):
                     filtered.append(r)
                 result = filtered
 
-        # 排序：未略過在前（依 count desc）、略過在後（依 count desc）
-        result.sort(key=lambda r: (r["skipped"], -r["count"]))
+        # 排序：未略過在前 → 登入者本人 cluster 第一 → 其餘依 count desc → 略過在後
+        identity = self._perms().get("identity") or ""
+        result.sort(key=lambda r: (
+            r["skipped"],
+            not (identity and r["id"] == identity),
+            -r["count"],
+        ))
         return result
 
     def get_page(self, page, flt, kind: str = "face"):
