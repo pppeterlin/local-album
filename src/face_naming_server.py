@@ -2284,7 +2284,7 @@ body:not(.admin) .tile .tcount{color:#666;font-size:12px;margin-top:3px}
   <button data-filter="unnamed" onclick="setFilter('unnamed')">未命名</button>
   <button data-filter="named" onclick="setFilter('named')">已命名</button>
   <button data-filter="skipped" onclick="setFilter('skipped')">已略過</button>
-  <button id="clusterSelectBtn" onclick="toggleClusterSelectMode()">✅ 多選合併</button>
+  <button id="clusterSelectBtn" onclick="toggleClusterSelectMode()">✅ 多選</button>
   <button id="viewToggle" onclick="toggleView()" style="display:none;margin-left:14px">📋 清單模式</button>
 </div>
 
