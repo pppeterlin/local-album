@@ -1194,16 +1194,31 @@ class Handler(SimpleHTTPRequestHandler):
         # update password_hash via _auth.hash_password, save_users.
         # UI side: add a small "改密碼" link in the userbar.
 
-        # everything else is admin-only (mutations)
+        # 從這裡開始都是 mutation，至少要登入
         if not self._user():
             self.send_error(401, "login required"); return
-        if not self._require_admin():
-            return
 
         # body 帶 kind 表示對 face 或 pet 動作（向下相容，預設 face）
         kind = body.get("kind") or "face"
         if kind not in KIND_PATHS:
             kind = "face"
+
+        # /api/set_thumb：admin 全 cluster 可改；非 admin 只能改自己的 identity cluster
+        # （讓 user 可以從自己照片裡挑一張當頭像，無須 admin）
+        if path == "/api/set_thumb":
+            perms = self._perms()
+            fid = body.get("face_id") or ""
+            img_path = body.get("image_path")
+            if not perms["is_admin"]:
+                if kind != "face" or not fid or fid != perms.get("identity"):
+                    self.send_error(403, "只能修改自己 (identity) 的頭像")
+                    return
+            self.json_response(self._set_custom_thumb(fid, img_path, kind=kind))
+            return
+
+        # 其餘 mutation 都需要 admin
+        if not self._require_admin():
+            return
 
         if path == "/api/name":
             names = load_names_k(kind)
@@ -1350,11 +1365,6 @@ class Handler(SimpleHTTPRequestHandler):
                 save_moves_k(kind, moves)
             self.json_response({"ok": True, "moved": len(paths), "to_id": to_id})
 
-        elif path == "/api/set_thumb":
-            fid = body.get("face_id")
-            img_path = body.get("image_path")
-            result = self._set_custom_thumb(fid, img_path, kind=kind)
-            self.json_response(result)
 
         elif path == "/api/admin/users":
             # body: {username, password, role, groups[]}
@@ -2148,10 +2158,12 @@ function login(){
         # 偵測哪些 kind 有資料；UI 才會顯示對應的 toggle 按鈕
         has_face = (FACES_DIR / "face_clusters.json").exists()
         has_pet  = (PETS_DIR / "pet_clusters.json").exists()
+        my_identity = perms.get("identity") or ""
         inject = (
             f"<script>"
             f"window.CURRENT_USER='{user}';"
             f"window.IS_ADMIN={is_admin};"
+            f"window.IDENTITY='{my_identity}';"  # 自己對應的 face_id；空字串 = 訪客
             f"window.KIND='face';"
             f"window.HAS_FACE={'true' if has_face else 'false'};"
             f"window.HAS_PET={'true' if has_pet else 'false'};"
@@ -2312,6 +2324,7 @@ body:not(.admin) .tile .tcount{color:#666;font-size:12px;margin-top:3px}
 .expand-header .close{background:#333;color:#ccc;border:none;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:16px}
 .expand-header .close:hover{background:#444}
 .expand-body{padding:14px 20px;overflow-y:auto;flex:1}
+.self-hint{background:#1c2d3e;border:1px solid #2c4a6a;color:#9cf;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;line-height:1.5}
 .expand-modal .expand-photos{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
 .expand-modal .expand-photos .thumb-wrap img{border-radius:6px}
 .expand-modal .removed-grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px}
@@ -2912,6 +2925,9 @@ function renderExpandBody(){
     return Number(b) - Number(a);
   });
 
+  // 是否是當前 user 自己的 cluster（給 viewer 開放「自選頭像」）
+  const isOwnIdentity = !!window.IDENTITY && fid === window.IDENTITY;
+
   function renderThumb(x){
     const img = x.path;
     const safeImg = img.replace(/'/g,"\\'");
@@ -2920,12 +2936,21 @@ function renderExpandBody(){
     const imgClick = inSelect
       ? `onclick="toggleThumbSelect('${fid}','${safeImg}')"`
       : `onclick="window.open('/image/${img}')" style="cursor:pointer"`;
-    const actions = (inSelect || !window.IS_ADMIN) ? '' : `
-      <div class="thumb-actions">
-        <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為群組特寫照">⭐</button>
-        <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群">→</button>
-        <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除">✕</button>
-      </div>`;
+    let actions = '';
+    if(!inSelect){
+      if(window.IS_ADMIN){
+        actions = `<div class="thumb-actions">
+          <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為群組特寫照">⭐</button>
+          <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群">→</button>
+          <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除">✕</button>
+        </div>`;
+      } else if(isOwnIdentity){
+        // viewer 在自己的 cluster：只能挑頭像，不能移動 / 移除
+        actions = `<div class="thumb-actions">
+          <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為我的頭像">⭐</button>
+        </div>`;
+      }
+    }
     return `<div class="${wrapCls}" data-thumb="${fid}|${img}">
       <img src="/img_thumb/${img}?w=300" loading="lazy" decoding="async" ${imgClick}>
       ${actions}
@@ -2976,7 +3001,12 @@ function renderExpandBody(){
     </div>`;
   }
 
-  document.getElementById('expandBody').innerHTML = `${tools}${sections}${removedSection}`;
+  // 自己的 cluster：顯示挑頭像的提示橫幅
+  const selfHint = (isOwnIdentity && !window.IS_ADMIN)
+    ? `<div class="self-hint">💡 點任一張照片右上的 ⭐ 可設為你的頭像（其他人看你也會用這張）</div>`
+    : '';
+
+  document.getElementById('expandBody').innerHTML = `${selfHint}${tools}${sections}${removedSection}`;
 }
 
 function toggleRemovedSection(){
