@@ -38,6 +38,7 @@ _md = _load_env_var("METADATA_DIR")
 METADATA_DIR = Path(_md) if _md else (PROJECT_ROOT / "data")
 
 FACES_DIR = METADATA_DIR / "faces"
+PETS_DIR = METADATA_DIR / "pets"
 LABELS_DIR = METADATA_DIR / "labels"
 EMBEDDINGS_DIR = METADATA_DIR / "embeddings"
 SAMPLES_DIR = METADATA_DIR / "samples"
