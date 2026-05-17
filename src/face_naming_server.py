@@ -2176,7 +2176,7 @@ body:not(.admin) .tile .tcount{color:#666;font-size:12px;margin-top:3px}
 .list-row .lr-actions button:hover{background:#2a2a2a}
 .card{position:relative;background:#1a1a1a;border-radius:10px;border:2px solid #2a2a2a;overflow:hidden;transition:border-color .2s}
 .card.cluster-selected{border-color:#ffeb3b;box-shadow:0 0 0 2px rgba(255,235,59,.25) inset}
-.cluster-cb{position:absolute;top:10px;left:10px;width:22px;height:22px;accent-color:#4fc3f7;cursor:pointer;z-index:5}
+.cluster-cb{position:absolute;top:8px;right:8px;width:24px;height:24px;accent-color:#4fc3f7;cursor:pointer;z-index:5;background:rgba(0,0,0,.55);border-radius:4px;padding:1px}
 #clusterSelectBtn.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
 .card:hover{border-color:#444}
 .card.named{border-color:#4fc3f7}
