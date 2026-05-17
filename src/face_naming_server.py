@@ -547,6 +547,14 @@ class Handler(SimpleHTTPRequestHandler):
             if not self._require_admin(): return
             self.json_response(self._admin_list_paths())
 
+        elif path == "/api/admin/relationship-graph":
+            if not self._require_admin(): return
+            self.json_response({
+                "graph": _auth.load_relationship_graph(),
+                "family_types": list(_auth.FAMILY_EDGE_RULES.keys()),
+                "non_family_types": sorted(_auth.NON_FAMILY_TYPES),
+            })
+
         elif path.startswith("/image/"):
             img = self.fix_path(path[7:])
             if not self._can_see_image(img):
@@ -767,6 +775,10 @@ class Handler(SimpleHTTPRequestHandler):
             # body: {action: "upsert"|"delete", allowed_faces?, blocked_paths?}
             gname = unquote(path[len("/api/admin/groups/"):])
             self.json_response(self._admin_modify_group(gname, body))
+
+        elif path == "/api/admin/relationship-graph":
+            # body: {nodes: [face_id], edges: [{from, to, type, alias_from?, alias_to?}]}
+            self.json_response(self._admin_save_relationship_graph(body))
 
         else:
             self.send_error(404)
@@ -1122,6 +1134,37 @@ class Handler(SimpleHTTPRequestHandler):
         }
         _auth.save_groups(groups)
         return {"ok": True}
+
+    def _admin_save_relationship_graph(self, body: dict):
+        """儲存圖 + 從圖自動推導 relationships.json。"""
+        nodes = body.get("nodes") or []
+        edges = body.get("edges") or []
+        if not isinstance(nodes, list) or not isinstance(edges, list):
+            return {"ok": False, "error": "nodes / edges 必須是陣列"}
+        clean_nodes = [n for n in nodes if isinstance(n, str) and n.strip()]
+        clean_edges: list[dict] = []
+        for e in edges:
+            if not isinstance(e, dict):
+                continue
+            f, t, typ = e.get("from"), e.get("to"), e.get("type")
+            if not (isinstance(f, str) and isinstance(t, str) and isinstance(typ, str)):
+                continue
+            f, t, typ = f.strip(), t.strip(), typ.strip()
+            if not f or not t or not typ or f == t:
+                continue
+            clean = {"from": f, "to": t, "type": typ}
+            if e.get("alias_from"):
+                clean["alias_from"] = str(e["alias_from"]).strip()
+            if e.get("alias_to"):
+                clean["alias_to"] = str(e["alias_to"]).strip()
+            clean_edges.append(clean)
+        graph = {"nodes": clean_nodes, "edges": clean_edges}
+        _auth.save_relationship_graph(graph)
+        # 自動推導 relationships.json（家人邊才產 alias；非家人邊只在圖上顯示）
+        derived = _auth.derive_relationships(graph)
+        _auth.save_relationships(derived)
+        return {"ok": True, "nodes": len(clean_nodes), "edges": len(clean_edges),
+                "aliases": sum(len(v) for v in derived.values())}
 
     # ---- data assembly ----
 

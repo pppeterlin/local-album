@@ -45,7 +45,15 @@ SECRET_FILE = AUTH_DIR / ".session_secret"
 # Schema: {viewer_face_id: {target_face_id: "alias", ...}}
 # Self alias (same key as viewer) overrides the default "我".
 # Local file under METADATA_DIR/auth (already outside the repo / gitignored).
+# Auto-derived from RELATIONSHIP_GRAPH_FILE on save; can also be hand-edited.
 RELATIONSHIPS_FILE = AUTH_DIR / "relationships.json"
+
+# Underlying relationship graph (nodes + typed edges) edited via /admin UI.
+# Schema: {nodes: [face_id], edges: [{from, to, type, alias_from?, alias_to?}]}
+#   - type:  one of FAMILY_EDGE_RULES keys, NON_FAMILY_TYPES, or a custom string
+#   - alias_from: override what `from` displays as when `to` is the viewer
+#   - alias_to:   override what `to` displays as when `from` is the viewer
+RELATIONSHIP_GRAPH_FILE = AUTH_DIR / "relationship_graph.json"
 
 SESSION_TTL_SEC = 365 * 24 * 60 * 60  # 1 year
 COOKIE_NAME = "lasession"
@@ -151,6 +159,61 @@ def save_users(d): _save_json(USERS_FILE, d)
 def load_groups() -> dict:   return _load_json(GROUPS_FILE, {})
 def save_groups(d): _save_json(GROUPS_FILE, d)
 def load_relationships() -> dict: return _load_json(RELATIONSHIPS_FILE, {})
+def save_relationships(d): _save_json(RELATIONSHIPS_FILE, d)
+def load_relationship_graph() -> dict: return _load_json(RELATIONSHIP_GRAPH_FILE, {"nodes": [], "edges": []})
+def save_relationship_graph(d): _save_json(RELATIONSHIP_GRAPH_FILE, d)
+
+
+# Family edge rules. Convention: edge (from → to, type) means
+# "from is the {type} of to" — e.g. type=父 → from is to's father.
+# Each rule returns (forward, backward):
+#   - forward:  what `from` looks like to `to`         (viewer = to)
+#   - backward: what `to` looks like to `from`         (viewer = from)
+# Gender-neutral receiver terms (孫子女 / 兄姐 / 子女 / 配偶);
+# users can override per-edge via alias_from / alias_to.
+# Reverse relationships (子, 女, 孫, …) are just edges drawn in the opposite
+# direction with the parent-side type — no need to define them here.
+FAMILY_EDGE_RULES: dict[str, tuple[str, str]] = {
+    "父": ("爸爸", "子女"),
+    "母": ("媽媽", "子女"),
+    "夫": ("丈夫", "妻子"),
+    "妻": ("妻子", "丈夫"),
+    "兄": ("哥哥", "弟妹"),
+    "姐": ("姐姐", "弟妹"),
+    "弟": ("弟弟", "兄姐"),
+    "妹": ("妹妹", "兄姐"),
+    "爺爺": ("爺爺", "孫子女"),
+    "奶奶": ("奶奶", "孫子女"),
+    "外公": ("外公", "外孫子女"),
+    "外婆": ("外婆", "外孫子女"),
+}
+
+# Non-family types — pure visualization, no alias derivation.
+NON_FAMILY_TYPES: set[str] = {
+    "同學-國小", "同學-國中", "同學-高中", "同學-大學", "同事", "朋友",
+}
+
+
+def derive_relationships(graph: dict) -> dict:
+    """從 relationship_graph 推導 relationships.json。
+    只處理 FAMILY_EDGE_RULES 範圍內的邊；非家人邊不影響 alias。
+    每個邊上的 alias_from / alias_to 覆寫預設詞。
+    回傳 {viewer_face_id: {target_face_id: alias_string}}。
+    """
+    result: dict[str, dict[str, str]] = {}
+    for edge in graph.get("edges", []):
+        f, t, typ = edge.get("from"), edge.get("to"), edge.get("type")
+        if not f or not t or not typ:
+            continue
+        rule = FAMILY_EDGE_RULES.get(typ)
+        if not rule:
+            continue  # non-family or custom → no auto alias
+        forward_default, backward_default = rule
+        forward = edge.get("alias_to") or forward_default      # `from` 從 `to` 視角看到的稱呼
+        backward = edge.get("alias_from") or backward_default  # `to` 從 `from` 視角看到的稱呼
+        result.setdefault(t, {})[f] = forward
+        result.setdefault(f, {})[t] = backward
+    return result
 
 
 def display_name_for(
