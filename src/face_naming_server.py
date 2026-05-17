@@ -1205,6 +1205,18 @@ class Handler(SimpleHTTPRequestHandler):
             save_skipped_k(kind, skipped)
             self.json_response({"ok": True, "skipped": fid in skipped})
 
+        elif path == "/api/skip-batch":
+            # body: {kind, face_ids: [...]} — idempotent，全部加入 skipped 集合
+            skipped = load_skipped_k(kind)
+            ids = body.get("face_ids") or []
+            added = 0
+            for fid in ids:
+                if isinstance(fid, str) and fid and fid not in skipped:
+                    skipped.append(fid)
+                    added += 1
+            save_skipped_k(kind, skipped)
+            self.json_response({"ok": True, "added": added, "total_skipped": len(skipped)})
+
         elif path == "/api/merge":
             merges = load_merges_k(kind)
             names = load_names_k(kind)
@@ -2276,12 +2288,13 @@ body:not(.admin) .tile .tcount{color:#666;font-size:12px;margin-top:3px}
   <button id="viewToggle" onclick="toggleView()" style="display:none;margin-left:14px">📋 清單模式</button>
 </div>
 
-<!-- 多選合併動作列（沿用 .select-bar 樣式，獨立 id） -->
+<!-- 多選動作列（沿用 .select-bar 樣式，獨立 id） -->
 <div class="select-bar" id="clusterSelectBar">
   <span class="count">已選 <span id="clusterSelectCount">0</span> 個 cluster</span>
   <button class="btn-cancel" onclick="selectAllVisibleClusters()">全選</button>
   <button class="btn-cancel" onclick="clearClusterSelection()">取消</button>
-  <button class="btn-go" onclick="openBatchMerge()">合併到…</button>
+  <button class="btn-go" onclick="openBatchMerge()">🔗 合併到…</button>
+  <button class="btn-cancel" onclick="batchSkip()" style="background:#3a3a1a;color:#ffeb3b">⏭️ 略過</button>
   <button class="btn-cancel" onclick="exitClusterSelectMode()">退出</button>
 </div>
 
@@ -2588,6 +2601,21 @@ function openBatchMerge(){
     renderMergeOptions(allClusters);
     document.getElementById('mergeModal').classList.add('active');
     setTimeout(()=>document.getElementById('mergeFilter').focus(), 50);
+  });
+}
+
+function batchSkip(){
+  if(selectedClusterIds.size === 0){ alert('請先勾選 cluster'); return; }
+  const ids = Array.from(selectedClusterIds);
+  if(!confirm(`確定要把 ${ids.length} 個 cluster 都標為「略過」？`)) return;
+  post('/api/skip-batch', {face_ids: ids}).then(r => r.json()).then(d => {
+    // 退出多選 + 重載
+    clusterSelectMode = false;
+    selectedClusterIds.clear();
+    document.getElementById('clusterSelectBtn').classList.remove('active');
+    document.getElementById('clusterSelectBar').classList.remove('active');
+    loadStats();
+    loadPage(currentPage);
   });
 }
 
