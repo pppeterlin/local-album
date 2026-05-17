@@ -1227,6 +1227,32 @@ class Handler(SimpleHTTPRequestHandler):
                 save_merges_k(kind, merges)
             self.json_response({"ok": True})
 
+        elif path == "/api/merge-batch":
+            # body: {source_ids: [list], target_id, kind}
+            merges = load_merges_k(kind)
+            names = load_names_k(kind)
+            srcs = body.get("source_ids") or []
+            tgt = body.get("target_id")
+            if not isinstance(srcs, list) or not tgt:
+                self.json_response({"ok": False, "error": "需要 source_ids[] 與 target_id"})
+                return
+            final = _resolve_target(merges, tgt)
+            merged_count = 0
+            for src in srcs:
+                if not isinstance(src, str) or not src or src == final:
+                    continue
+                # 避免循環：解 src 自己再看
+                src_final = _resolve_target(merges, src)
+                if src_final == final:
+                    continue
+                merges[src] = final
+                if final in names:
+                    names[src] = names[final]
+                merged_count += 1
+            save_merges_k(kind, merges)
+            save_names_k(kind, names)
+            self.json_response({"ok": True, "merged": merged_count, "target": final})
+
         elif path == "/api/remove":
             removed = load_removed_k(kind)
             fid, img_path = body.get("face_id"), body.get("image_path")
@@ -2136,7 +2162,10 @@ body:not(.admin) .tile .tcount{color:#666;font-size:12px;margin-top:3px}
 .list-row .lr-actions{display:flex;gap:6px}
 .list-row .lr-actions button{padding:5px 10px;font-size:12px;border-radius:4px;border:1px solid #444;background:#222;color:#ccc;cursor:pointer}
 .list-row .lr-actions button:hover{background:#2a2a2a}
-.card{background:#1a1a1a;border-radius:10px;border:2px solid #2a2a2a;overflow:hidden;transition:border-color .2s}
+.card{position:relative;background:#1a1a1a;border-radius:10px;border:2px solid #2a2a2a;overflow:hidden;transition:border-color .2s}
+.card.cluster-selected{border-color:#ffeb3b;box-shadow:0 0 0 2px rgba(255,235,59,.25) inset}
+.cluster-cb{position:absolute;top:10px;left:10px;width:22px;height:22px;accent-color:#4fc3f7;cursor:pointer;z-index:5}
+#clusterSelectBtn.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
 .card:hover{border-color:#444}
 .card.named{border-color:#4fc3f7}
 .card.skipped{opacity:.55;border-color:#444;background:#161616}
@@ -2243,7 +2272,17 @@ body:not(.admin) .tile .tcount{color:#666;font-size:12px;margin-top:3px}
   <button data-filter="unnamed" onclick="setFilter('unnamed')">未命名</button>
   <button data-filter="named" onclick="setFilter('named')">已命名</button>
   <button data-filter="skipped" onclick="setFilter('skipped')">已略過</button>
+  <button id="clusterSelectBtn" onclick="toggleClusterSelectMode()">✅ 多選合併</button>
   <button id="viewToggle" onclick="toggleView()" style="display:none;margin-left:14px">📋 清單模式</button>
+</div>
+
+<!-- 多選合併動作列（沿用 .select-bar 樣式，獨立 id） -->
+<div class="select-bar" id="clusterSelectBar">
+  <span class="count">已選 <span id="clusterSelectCount">0</span> 個 cluster</span>
+  <button class="btn-cancel" onclick="selectAllVisibleClusters()">全選</button>
+  <button class="btn-cancel" onclick="clearClusterSelection()">取消</button>
+  <button class="btn-go" onclick="openBatchMerge()">合併到…</button>
+  <button class="btn-cancel" onclick="exitClusterSelectMode()">退出</button>
 </div>
 
 <div class="stats admin-only" id="stats"></div>
@@ -2316,6 +2355,9 @@ let totalCount = 0;
 let filter = 'all';
 let viewMode = 'grid';  // 'grid' | 'list'，list 只有 named filter 下可用
 let mergeSource = '';
+let mergeSources = [];          // 多選合併用：>0 表示 batch 模式
+let clusterSelectMode = false;
+let selectedClusterIds = new Set();
 let moveSource = '';   // 來源 cluster id
 let movePath = '';     // 單張移動的圖片路徑（null 代表 batch）
 let allClusters = [];  // 給合併/移動下拉用，按需 fetch
@@ -2506,6 +2548,49 @@ function toggleView(){
   renderGrid();
 }
 
+// ---- 多選合併 ----
+function toggleClusterSelectMode(){
+  clusterSelectMode = !clusterSelectMode;
+  if(!clusterSelectMode){ selectedClusterIds.clear(); }
+  document.getElementById('clusterSelectBtn').classList.toggle('active', clusterSelectMode);
+  document.getElementById('clusterSelectBar').classList.toggle('active', clusterSelectMode);
+  updateClusterSelectCount();
+  renderGrid();
+}
+function exitClusterSelectMode(){ clusterSelectMode = false; selectedClusterIds.clear(); toggleClusterSelectMode(); /* second toggle re-applies; cheap */ }
+function clearClusterSelection(){ selectedClusterIds.clear(); updateClusterSelectCount(); renderGrid(); }
+function selectAllVisibleClusters(){
+  ITEMS.forEach(c => selectedClusterIds.add(c.id));
+  updateClusterSelectCount();
+  renderGrid();
+}
+function toggleClusterSelected(fid){
+  if(selectedClusterIds.has(fid)) selectedClusterIds.delete(fid);
+  else selectedClusterIds.add(fid);
+  updateClusterSelectCount();
+  // 只重畫該卡片，避免整頁重 render
+  const card = document.getElementById('card_' + fid);
+  if(card) card.classList.toggle('cluster-selected', selectedClusterIds.has(fid));
+  const cb = document.getElementById('cb_' + fid);
+  if(cb) cb.checked = selectedClusterIds.has(fid);
+}
+function updateClusterSelectCount(){
+  const el = document.getElementById('clusterSelectCount');
+  if(el) el.textContent = selectedClusterIds.size;
+}
+function openBatchMerge(){
+  if(selectedClusterIds.size === 0){ alert('請先勾選 cluster'); return; }
+  mergeSources = Array.from(selectedClusterIds);
+  document.getElementById('mergeFilter').value='';
+  fetch(kq('/api/clusters')).then(r=>r.json()).then(list=>{
+    // 目標不能是已選中的任何一個
+    allClusters = list.filter(c => !selectedClusterIds.has(c.id));
+    renderMergeOptions(allClusters);
+    document.getElementById('mergeModal').classList.add('active');
+    setTimeout(()=>document.getElementById('mergeFilter').focus(), 50);
+  });
+}
+
 function renderCard(c){
   const fid = c.id;
   // viewer：簡化成大頭像 + 名字的 tile，整塊可點 → openExpand
@@ -2520,7 +2605,17 @@ function renderCard(c){
   }
   const isNamed = !!c.name;
   const isSkipped = !!c.skipped;
-  const cls = 'card' + (isNamed?' named':'') + (isSkipped?' skipped':'');
+  const isSelected = clusterSelectMode && selectedClusterIds.has(fid);
+  const cls = 'card' + (isNamed?' named':'') + (isSkipped?' skipped':'') + (isSelected?' cluster-selected':'');
+
+  // 多選模式：整張卡片 click 切換選取（覆蓋掉其它互動）
+  const cardClickHandler = clusterSelectMode
+    ? `onclick="toggleClusterSelected('${fid}')"`
+    : '';
+  const selectCheckbox = clusterSelectMode
+    ? `<input type="checkbox" id="cb_${fid}" class="cluster-cb" ${isSelected?'checked':''}
+              onclick="event.stopPropagation();toggleClusterSelected('${fid}')">`
+    : '';
 
   const previewCount = Math.min(Math.max(6, c.images.length), 8);
   const previewImgs = c.images.slice(0,previewCount).map(img=>
@@ -2529,7 +2624,8 @@ function renderCard(c){
   ).join('');
 
   let actions = '';
-  if(window.IS_ADMIN){
+  // 多選模式下隱藏每張卡的 action（避免誤點）
+  if(window.IS_ADMIN && !clusterSelectMode){
     if(isSkipped){
       actions = `<span style="color:#666">已略過</span>
         <button class="btn btn-edit" onclick="toggleSkip('${fid}')">↩ 恢復</button>`;
@@ -2559,7 +2655,8 @@ function renderCard(c){
   const mergedBadge = badges.join('');
 
   return `
-    <div class="${cls}" id="card_${fid}">
+    <div class="${cls}" id="card_${fid}" ${cardClickHandler}>
+      ${selectCheckbox}
       <div class="card-top">
         <div class="face-meta">
           <h3>${c.name || fid}</h3>
@@ -2570,7 +2667,7 @@ function renderCard(c){
         <img class="face-thumb" src="${thumbUrl(fid, c.thumb_v)}" onerror="this.style.display='none'">
       </div>
       <div class="photo-grid">${previewImgs}</div>
-      <div class="expand-bar" onclick="openExpand('${fid}')">
+      <div class="expand-bar" onclick="event.stopPropagation();openExpand('${fid}')">
         <span>📂 展開查看全部 ${c.count} 張</span>
         <span>↗</span>
       </div>
@@ -2938,6 +3035,22 @@ function filterMergeOptions(){
 function confirmMerge(){
   const tgt = document.getElementById('mergeTarget').value;
   if(!tgt) return;
+  // 多選 batch 模式
+  if(mergeSources.length > 0){
+    if(!confirm(`確定把 ${mergeSources.length} 個 cluster 合併到「${tgt}」？`)) return;
+    post('/api/merge-batch', {source_ids: mergeSources, target_id: tgt}).then(r => r.json()).then(d => {
+      closeMerge();
+      mergeSources = [];
+      // 離開多選模式並清掉選取狀態
+      clusterSelectMode = false;
+      selectedClusterIds.clear();
+      document.getElementById('clusterSelectBtn').classList.remove('active');
+      document.getElementById('clusterSelectBar').classList.remove('active');
+      loadStats();
+      loadPage(currentPage);
+    });
+    return;
+  }
   post('/api/merge',{source_id:mergeSource,target_id:tgt}).then(()=>{
     closeMerge();
     loadStats();
