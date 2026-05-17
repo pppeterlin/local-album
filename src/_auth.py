@@ -41,6 +41,19 @@ AUTH_DIR = METADATA_DIR / "auth"
 USERS_FILE = AUTH_DIR / "users.json"
 GROUPS_FILE = AUTH_DIR / "groups.json"
 SECRET_FILE = AUTH_DIR / ".session_secret"
+# Per-viewer display-name aliases (e.g. mom sees chun as "兒子").
+# Schema: {viewer_face_id: {target_face_id: "alias", ...}}
+# Self alias (same key as viewer) overrides the default "我".
+# Local file under METADATA_DIR/auth (already outside the repo / gitignored).
+# Auto-derived from RELATIONSHIP_GRAPH_FILE on save; can also be hand-edited.
+RELATIONSHIPS_FILE = AUTH_DIR / "relationships.json"
+
+# Underlying relationship graph (nodes + typed edges) edited via /admin UI.
+# Schema: {nodes: [face_id], edges: [{from, to, type, alias_from?, alias_to?}]}
+#   - type:  one of FAMILY_EDGE_RULES keys, NON_FAMILY_TYPES, or a custom string
+#   - alias_from: override what `from` displays as when `to` is the viewer
+#   - alias_to:   override what `to` displays as when `from` is the viewer
+RELATIONSHIP_GRAPH_FILE = AUTH_DIR / "relationship_graph.json"
 
 SESSION_TTL_SEC = 365 * 24 * 60 * 60  # 1 year
 COOKIE_NAME = "lasession"
@@ -145,33 +158,117 @@ def load_users() -> dict:    return _load_json(USERS_FILE, {})
 def save_users(d): _save_json(USERS_FILE, d)
 def load_groups() -> dict:   return _load_json(GROUPS_FILE, {})
 def save_groups(d): _save_json(GROUPS_FILE, d)
+def load_relationships() -> dict: return _load_json(RELATIONSHIPS_FILE, {})
+def save_relationships(d): _save_json(RELATIONSHIPS_FILE, d)
+def load_relationship_graph() -> dict: return _load_json(RELATIONSHIP_GRAPH_FILE, {"nodes": [], "edges": []})
+def save_relationship_graph(d): _save_json(RELATIONSHIP_GRAPH_FILE, d)
+
+
+# Family edge rules. Convention: edge (from → to, type) means
+# "from is the {type} of to" — e.g. type=父 → from is to's father.
+# Each rule returns (forward, backward):
+#   - forward:  what `from` looks like to `to`         (viewer = to)
+#   - backward: what `to` looks like to `from`         (viewer = from)
+# Gender-neutral receiver terms (孫子女 / 兄姐 / 子女 / 配偶);
+# users can override per-edge via alias_from / alias_to.
+# Reverse relationships (子, 女, 孫, …) are just edges drawn in the opposite
+# direction with the parent-side type — no need to define them here.
+FAMILY_EDGE_RULES: dict[str, tuple[str, str]] = {
+    "父": ("爸爸", "子女"),
+    "母": ("媽媽", "子女"),
+    "夫": ("丈夫", "妻子"),
+    "妻": ("妻子", "丈夫"),
+    "兄": ("哥哥", "弟妹"),
+    "姐": ("姐姐", "弟妹"),
+    "弟": ("弟弟", "兄姐"),
+    "妹": ("妹妹", "兄姐"),
+    "爺爺": ("爺爺", "孫子女"),
+    "奶奶": ("奶奶", "孫子女"),
+    "外公": ("外公", "外孫子女"),
+    "外婆": ("外婆", "外孫子女"),
+}
+
+# Non-family types — pure visualization, no alias derivation.
+NON_FAMILY_TYPES: set[str] = {
+    "同學-國小", "同學-國中", "同學-高中", "同學-大學", "同事", "朋友",
+}
+
+
+def derive_relationships(graph: dict) -> dict:
+    """從 relationship_graph 推導 relationships.json。
+    只處理 FAMILY_EDGE_RULES 範圍內的邊；非家人邊不影響 alias。
+    每個邊上的 alias_from / alias_to 覆寫預設詞。
+    回傳 {viewer_face_id: {target_face_id: alias_string}}。
+    """
+    result: dict[str, dict[str, str]] = {}
+    for edge in graph.get("edges", []):
+        f, t, typ = edge.get("from"), edge.get("to"), edge.get("type")
+        if not f or not t or not typ:
+            continue
+        rule = FAMILY_EDGE_RULES.get(typ)
+        if not rule:
+            continue  # non-family or custom → no auto alias
+        forward_default, backward_default = rule
+        forward = edge.get("alias_to") or forward_default      # `from` 從 `to` 視角看到的稱呼
+        backward = edge.get("alias_from") or backward_default  # `to` 從 `from` 視角看到的稱呼
+        result.setdefault(t, {})[f] = forward
+        result.setdefault(f, {})[t] = backward
+    return result
+
+
+def display_name_for(
+    viewer_identity: str,
+    target_face_id: str,
+    canonical_name: str,
+    relationships: dict,
+) -> str:
+    """個人化顯示名稱。優先序：
+      1. relationships[viewer][target] 存在 → 用 alias（可覆寫 self 預設）
+      2. target == viewer → 「我」
+      3. 否則 → canonical_name
+    """
+    if not viewer_identity:
+        return canonical_name
+    rel = relationships.get(viewer_identity, {})
+    if target_face_id in rel:
+        return rel[target_face_id]
+    if target_face_id == viewer_identity:
+        return "我"
+    return canonical_name
 
 # --- permission resolution --------------------------------------------------
 
 def get_user_perms(username: str | None) -> dict:
     """Resolve effective perms for a user.
-    Returns: {is_admin, is_viewer, identity, allowed_faces:set, blocked_paths:list}.
+    Returns: {is_admin, is_viewer, identity, allowed_faces:set, allowed_pets:set, blocked_paths:list}.
       - identity: single face_id (本人); ""=訪客. Has override-blocked-paths privilege.
       - allowed_faces: union over user's groups (includes identity for cluster-list
         purposes so the 本人 cluster is always visible).
+      - allowed_pets: union over user's groups. **Empty = no restriction** (寵物預設
+        全公開，與 allowed_faces 不同；只要任一群組有指定 allowed_pets 就轉為白名單模式)。
     None / unknown user → is_viewer=False (denies everything except login).
     """
+    empty = {"is_admin": False, "is_viewer": False, "identity": "",
+             "allowed_faces": set(), "allowed_pets": set(), "blocked_paths": []}
     if not username:
-        return {"is_admin": False, "is_viewer": False, "identity": "", "allowed_faces": set(), "blocked_paths": []}
+        return empty
     users = load_users()
     u = users.get(username)
     if not u:
-        return {"is_admin": False, "is_viewer": False, "identity": "", "allowed_faces": set(), "blocked_paths": []}
+        return empty
     if u.get("role") == "admin":
         return {"is_admin": True, "is_viewer": True, "identity": (u.get("identity") or "").strip(),
-                "allowed_faces": set(), "blocked_paths": []}
+                "allowed_faces": set(), "allowed_pets": set(), "blocked_paths": []}
     groups = load_groups()
-    allowed: set[str] = set()
+    allowed_faces: set[str] = set()
+    allowed_pets: set[str] = set()
     blocked: list[str] = []
     for g in u.get("groups", []):
         gd = groups.get(g, {})
         for fid in gd.get("allowed_faces", []):
-            allowed.add(fid)
+            allowed_faces.add(fid)
+        for pid in gd.get("allowed_pets", []):
+            allowed_pets.add(pid)
         for bp in gd.get("blocked_paths", []):
             if bp not in blocked:
                 blocked.append(bp)
@@ -179,9 +276,10 @@ def get_user_perms(username: str | None) -> dict:
     # 本人 cluster 一定要能看到 → 確保 identity 也在 allowed_faces（用於 cluster 篩選）
     # 注意：blocked_paths 的 override 特權只給 identity，不給其他 allowed_faces
     if identity:
-        allowed.add(identity)
+        allowed_faces.add(identity)
     return {"is_admin": False, "is_viewer": True, "identity": identity,
-            "allowed_faces": allowed, "blocked_paths": blocked}
+            "allowed_faces": allowed_faces, "allowed_pets": allowed_pets,
+            "blocked_paths": blocked}
 
 def path_blocked(path: str, blocked_paths: list[str]) -> bool:
     return any(path.startswith(bp) for bp in blocked_paths)
