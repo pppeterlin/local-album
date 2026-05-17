@@ -357,7 +357,7 @@ input[type=checkbox]{accent-color:#4fc3f7}
 </div>
 
 <script>
-let USERS=[], GROUPS=[], FACES=[], PATHS=[];
+let USERS=[], GROUPS=[], FACES=[], PETS=[], PATHS=[];
 const $ = (id) => document.getElementById(id);
 
 function showMsg(text, ok){
@@ -491,15 +491,23 @@ function renderGroups(){
   const wrap = $('groups-list');
   if(GROUPS.length===0){ wrap.innerHTML='<div class="card muted">尚未建立群組。</div>'; return; }
   wrap.innerHTML = GROUPS.map(g=>{
-    const allowed = new Set(g.allowed_faces||[]);
+    const allowedFaces = new Set(g.allowed_faces||[]);
+    const allowedPets = new Set(g.allowed_pets||[]);
     const blocked = new Set(g.blocked_paths||[]);
     const faceGrid = FACES.map(f=>{
-      const on = allowed.has(f.id);
+      const on = allowedFaces.has(f.id);
       return `<div class="face-item ${on?'on':''}" data-fid="${escapeHtml(f.id)}" onclick="toggleFace(this)">
         <img src="/thumb/${escapeHtml(f.id)}.jpg?v=${f.thumb_ver}" loading="lazy">
         <div class="meta"><span class="n">${escapeHtml(f.name)}</span><span style="color:#666">${f.count}</span></div>
       </div>`;
     }).join('') || '<span class="muted">（尚無命名的人臉群組）</span>';
+    const petGrid = PETS.map(p=>{
+      const on = allowedPets.has(p.id);
+      return `<div class="face-item pet ${on?'on':''}" data-pid="${escapeHtml(p.id)}" onclick="togglePet(this)">
+        <img src="/pet_thumb/${escapeHtml(p.id)}.jpg?v=${p.thumb_ver}" loading="lazy">
+        <div class="meta"><span class="n">${escapeHtml(p.name)}</span><span style="color:#666">${p.count}</span></div>
+      </div>`;
+    }).join('') || '<span class="muted">（尚無命名的寵物群組）</span>';
     const pathRows = PATHS.map(p=>{
       const id = 'p-'+g.name+'-'+btoa(unescape(encodeURIComponent(p.path))).replace(/=/g,'');
       return `<div class="path-row">
@@ -512,10 +520,13 @@ function renderGroups(){
         <h2>${escapeHtml(g.name)}</h2>
         <button class="danger" onclick="deleteGroup('${escapeHtml(g.name)}')">刪除群組</button>
       </div>
-      <div class="summary">允許看到 <b>${g.allowed_faces.length}</b> 個人臉群組 · 封鎖 <b>${g.blocked_paths.length}</b> 個路徑前綴</div>
+      <div class="summary">允許 <b>${g.allowed_faces.length}</b> 人臉 · <b>${(g.allowed_pets||[]).length}</b> 寵物 · 封鎖 <b>${g.blocked_paths.length}</b> 個路徑</div>
 
       <h3>可看到的人臉群組（allowed_faces）</h3>
       <div class="face-grid">${faceGrid}</div>
+
+      <h3>可看到的寵物群組（allowed_pets） <span style="font-weight:400;color:#888;font-size:11px">— 不選則所有寵物公開</span></h3>
+      <div class="face-grid">${petGrid}</div>
 
       <h3>封鎖路徑前綴（blocked_paths）</h3>
       <div class="path-list">${pathRows}</div>
@@ -528,11 +539,13 @@ function renderGroups(){
 }
 
 function toggleFace(el){ el.classList.toggle('on'); }
+function togglePet(el){ el.classList.toggle('on'); }
 
 function createGroup(){
   const name = $('ng-name').value.trim();
   if(!name){ showMsg('群組名稱必填', false); return; }
-  api('POST','/api/admin/groups/'+encodeURIComponent(name),{action:'upsert',allowed_faces:[],blocked_paths:[]}).then(r=>{
+  api('POST','/api/admin/groups/'+encodeURIComponent(name),
+    {action:'upsert',allowed_faces:[],allowed_pets:[],blocked_paths:[]}).then(r=>{
     if(r.ok){ showMsg('✓ 已新增群組 '+name, true); $('ng-name').value=''; loadAll(); }
     else showMsg(r.error||'新增失敗', false);
   });
@@ -540,9 +553,11 @@ function createGroup(){
 
 function saveGroup(name){
   const card = document.querySelector(`.card[data-group="${CSS.escape(name)}"]`);
-  const allowed_faces = Array.from(card.querySelectorAll('.face-item.on')).map(x=>x.dataset.fid);
+  const allowed_faces = Array.from(card.querySelectorAll('.face-item:not(.pet).on')).map(x=>x.dataset.fid);
+  const allowed_pets  = Array.from(card.querySelectorAll('.face-item.pet.on')).map(x=>x.dataset.pid);
   const blocked_paths = Array.from(card.querySelectorAll('.path-list input:checked')).map(x=>x.value);
-  api('POST','/api/admin/groups/'+encodeURIComponent(name),{action:'upsert',allowed_faces,blocked_paths}).then(r=>{
+  api('POST','/api/admin/groups/'+encodeURIComponent(name),
+    {action:'upsert',allowed_faces,allowed_pets,blocked_paths}).then(r=>{
     if(r.ok){ showMsg('✓ 已更新群組 '+name, true); loadAll(); }
     else showMsg(r.error||'儲存失敗', false);
   });
@@ -942,8 +957,9 @@ function loadAll(){
     fetch('/api/admin/groups').then(r=>r.json()),
     fetch('/api/admin/faces').then(r=>r.json()),
     fetch('/api/admin/paths').then(r=>r.json()),
-  ]).then(([u,g,f,p])=>{
-    USERS=u; GROUPS=g; FACES=f; PATHS=p;
+    fetch('/api/admin/pets').then(r=>r.json()).catch(()=>[]),
+  ]).then(([u,g,f,p,pets])=>{
+    USERS=u; GROUPS=g; FACES=f; PATHS=p; PETS=pets||[];
     renderUsers();
     if(document.querySelector('.tabs button.active').dataset.tab==='groups') renderGroups();
   });
@@ -1058,6 +1074,10 @@ class Handler(SimpleHTTPRequestHandler):
         elif path == "/api/admin/faces":
             if not self._require_admin(): return
             self.json_response(self._admin_list_faces())
+
+        elif path == "/api/admin/pets":
+            if not self._require_admin(): return
+            self.json_response(self._admin_list_pets())
 
         elif path == "/api/admin/paths":
             if not self._require_admin(): return
@@ -1576,39 +1596,48 @@ class Handler(SimpleHTTPRequestHandler):
             {
                 "name": n,
                 "allowed_faces": list(g.get("allowed_faces", [])),
+                "allowed_pets": list(g.get("allowed_pets", [])),
                 "blocked_paths": list(g.get("blocked_paths", [])),
             }
             for n, g in sorted(groups.items())
         ]
 
     @staticmethod
-    def _admin_list_faces():
-        """已命名的 cluster 清單（admin 才會用到，給群組編輯選 allowed_faces）。"""
-        faces = load_faces() or {}
-        names = load_names()
-        merges = load_merges()
-        clusters = faces.get("clusters", {}) or {}
-        # 反查每個 final target 的圖片數（含被合併進來的 source）
+    def _admin_list_clusters_named(kind: str):
+        """共用：列出某 kind 已命名的 cluster（給 admin 群組編輯做白名單）。"""
+        data = load_clusters(kind) or {}
+        names = load_names_k(kind)
+        merges = load_merges_k(kind)
+        clusters = data.get("clusters", {}) or {}
         merge_back: dict[str, list[str]] = defaultdict(list)
         for src in list(merges.keys()):
             final = _resolve_target(merges, src)
             if final != src:
                 merge_back[final].append(src)
+        thumbs_dir = KIND_PATHS[kind]["thumbs"]
         result = []
         for fid, info in clusters.items():
             if fid in merges:
-                continue  # 被合併走的不獨立顯示
+                continue
             name = names.get(fid, "")
             if not name:
-                continue  # 只列出已命名的，admin 才知道誰是誰
+                continue
             count = len(info.get("images", []) or [])
             for s in merge_back.get(fid, []):
                 count += len(clusters.get(s, {}).get("images", []) or [])
-            thumb_file = THUMBS_DIR / f"{fid}.jpg"
+            thumb_file = thumbs_dir / f"{fid}.jpg"
             thumb_ver = int(thumb_file.stat().st_mtime) if thumb_file.exists() else 0
             result.append({"id": fid, "name": name, "count": count, "thumb_ver": thumb_ver})
         result.sort(key=lambda r: (-r["count"], r["name"]))
         return result
+
+    @staticmethod
+    def _admin_list_faces():
+        return Handler._admin_list_clusters_named("face")
+
+    @staticmethod
+    def _admin_list_pets():
+        return Handler._admin_list_clusters_named("pet")
 
     @staticmethod
     def _admin_list_paths():
@@ -1725,11 +1754,13 @@ class Handler(SimpleHTTPRequestHandler):
         if not name or not name.strip():
             return {"ok": False, "error": "群組名不能為空"}
         allowed_faces = body.get("allowed_faces") or []
+        allowed_pets = body.get("allowed_pets") or []
         blocked_paths = body.get("blocked_paths") or []
-        if not isinstance(allowed_faces, list) or not isinstance(blocked_paths, list):
-            return {"ok": False, "error": "allowed_faces / blocked_paths 必須是陣列"}
+        if not isinstance(allowed_faces, list) or not isinstance(allowed_pets, list) or not isinstance(blocked_paths, list):
+            return {"ok": False, "error": "allowed_faces / allowed_pets / blocked_paths 必須是陣列"}
         groups[name] = {
             "allowed_faces": [x for x in allowed_faces if isinstance(x, str) and x.strip()],
+            "allowed_pets":  [x for x in allowed_pets  if isinstance(x, str) and x.strip()],
             "blocked_paths": [x for x in blocked_paths if isinstance(x, str) and x.strip()],
         }
         _auth.save_groups(groups)
@@ -1912,7 +1943,10 @@ class Handler(SimpleHTTPRequestHandler):
         perms = self._perms()
         if not perms["is_admin"]:
             if kind == "pet":
-                # 寵物全公開：所有 cluster 都看得到；
+                # 寵物預設全公開；若 user 所屬群組有指定 allowed_pets，轉為白名單模式
+                allowed_pets = perms.get("allowed_pets") or set()
+                if allowed_pets:
+                    result = [r for r in result if r["id"] in allowed_pets]
                 # per-image 只擋 blocked_paths（沒有「無人臉自動隱藏」這條規則）
                 def _ok_pet(path):
                     return not _auth.path_blocked(path, perms["blocked_paths"])

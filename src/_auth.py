@@ -240,28 +240,35 @@ def display_name_for(
 
 def get_user_perms(username: str | None) -> dict:
     """Resolve effective perms for a user.
-    Returns: {is_admin, is_viewer, identity, allowed_faces:set, blocked_paths:list}.
+    Returns: {is_admin, is_viewer, identity, allowed_faces:set, allowed_pets:set, blocked_paths:list}.
       - identity: single face_id (本人); ""=訪客. Has override-blocked-paths privilege.
       - allowed_faces: union over user's groups (includes identity for cluster-list
         purposes so the 本人 cluster is always visible).
+      - allowed_pets: union over user's groups. **Empty = no restriction** (寵物預設
+        全公開，與 allowed_faces 不同；只要任一群組有指定 allowed_pets 就轉為白名單模式)。
     None / unknown user → is_viewer=False (denies everything except login).
     """
+    empty = {"is_admin": False, "is_viewer": False, "identity": "",
+             "allowed_faces": set(), "allowed_pets": set(), "blocked_paths": []}
     if not username:
-        return {"is_admin": False, "is_viewer": False, "identity": "", "allowed_faces": set(), "blocked_paths": []}
+        return empty
     users = load_users()
     u = users.get(username)
     if not u:
-        return {"is_admin": False, "is_viewer": False, "identity": "", "allowed_faces": set(), "blocked_paths": []}
+        return empty
     if u.get("role") == "admin":
         return {"is_admin": True, "is_viewer": True, "identity": (u.get("identity") or "").strip(),
-                "allowed_faces": set(), "blocked_paths": []}
+                "allowed_faces": set(), "allowed_pets": set(), "blocked_paths": []}
     groups = load_groups()
-    allowed: set[str] = set()
+    allowed_faces: set[str] = set()
+    allowed_pets: set[str] = set()
     blocked: list[str] = []
     for g in u.get("groups", []):
         gd = groups.get(g, {})
         for fid in gd.get("allowed_faces", []):
-            allowed.add(fid)
+            allowed_faces.add(fid)
+        for pid in gd.get("allowed_pets", []):
+            allowed_pets.add(pid)
         for bp in gd.get("blocked_paths", []):
             if bp not in blocked:
                 blocked.append(bp)
@@ -269,9 +276,10 @@ def get_user_perms(username: str | None) -> dict:
     # 本人 cluster 一定要能看到 → 確保 identity 也在 allowed_faces（用於 cluster 篩選）
     # 注意：blocked_paths 的 override 特權只給 identity，不給其他 allowed_faces
     if identity:
-        allowed.add(identity)
+        allowed_faces.add(identity)
     return {"is_admin": False, "is_viewer": True, "identity": identity,
-            "allowed_faces": allowed, "blocked_paths": blocked}
+            "allowed_faces": allowed_faces, "allowed_pets": allowed_pets,
+            "blocked_paths": blocked}
 
 def path_blocked(path: str, blocked_paths: list[str]) -> bool:
     return any(path.startswith(bp) for bp in blocked_paths)
