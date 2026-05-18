@@ -5,16 +5,22 @@
 <title>登入 · 人臉命名工具</title>
 <!--V05_ASSETS-->
 <style>
+/* v0.5: Morandi login */
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#111;color:#e0e0e0;
+body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,sans-serif;
+  background:hsl(var(--b1));color:hsl(var(--bc));
   min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{background:#1a1a1a;padding:30px;border-radius:12px;border:1px solid #333;max-width:360px;width:100%}
-h1{font-size:20px;margin-bottom:18px;color:#4fc3f7;text-align:center}
-input{width:100%;padding:11px 12px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;font-size:15px;margin-bottom:12px}
-input:focus{border-color:#4fc3f7;outline:none}
-button{width:100%;padding:12px;background:#4fc3f7;color:#000;border:none;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer}
-button:hover{background:#3fb3e7}
-.err{color:#ef5350;font-size:13px;margin-top:8px;text-align:center;min-height:20px}
+.card{background:hsl(var(--b2));padding:32px 30px;border-radius:16px;border:1px solid hsl(var(--b3));
+  max-width:360px;width:100%;box-shadow:0 8px 32px hsl(var(--n) / 0.10)}
+h1{font-size:20px;margin-bottom:20px;color:hsl(var(--p));text-align:center;font-weight:500}
+input{width:100%;padding:11px 12px;background:hsl(var(--b1));color:hsl(var(--bc));
+  border:1px solid hsl(var(--b3));border-radius:8px;font-size:15px;margin-bottom:12px;transition:border-color .15s}
+input:focus{border-color:hsl(var(--p));outline:none}
+button{width:100%;padding:12px;background:hsl(var(--p));color:hsl(var(--pc));border:none;
+  border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s ease-out}
+button:hover{transform:translateY(-1px);box-shadow:0 4px 12px hsl(var(--p) / 0.3)}
+button:active{transform:scale(.97)}
+.err{color:hsl(var(--er));font-size:13px;margin-top:8px;text-align:center;min-height:20px}
 </style>
 </head><body>
 <form class="card" onsubmit="event.preventDefault();login()">
