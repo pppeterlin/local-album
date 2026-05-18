@@ -5,26 +5,51 @@
 <title>登入 · Local Album</title>
 <!--V05_ASSETS-->
 <style>
-/* v0.5: Morandi login */
+/* v0.5: iOS 26 style login */
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,sans-serif;
-  background:hsl(var(--b1));color:hsl(var(--bc));
-  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{background:hsl(var(--b2));padding:32px 30px;border-radius:16px;border:1px solid hsl(var(--b3));
-  max-width:360px;width:100%;box-shadow:0 8px 32px hsl(var(--n) / 0.10)}
-h1{font-size:20px;margin-bottom:20px;color:hsl(var(--p));text-align:center;font-weight:500}
-input{width:100%;padding:11px 12px;background:hsl(var(--b1));color:hsl(var(--bc));
-  border:1px solid hsl(var(--b3));border-radius:8px;font-size:15px;margin-bottom:12px;transition:border-color .15s}
-input:focus{border-color:hsl(var(--p));outline:none}
-button{width:100%;padding:12px;background:hsl(var(--p));color:hsl(var(--pc));border:none;
-  border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s ease-out}
-button:hover{transform:translateY(-1px);box-shadow:0 4px 12px hsl(var(--p) / 0.3)}
-button:active{transform:scale(.97)}
-.err{color:hsl(var(--er));font-size:13px;margin-top:8px;text-align:center;min-height:20px}
+html,body{background:hsl(var(--b1))}
+body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,"Inter","Helvetica Neue",sans-serif;
+  color:hsl(var(--bc));min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;letter-spacing:-0.005em;line-height:1.5}
+
+[data-lucide]{display:block;width:1em;height:1em;stroke-width:1.75;flex-shrink:0}
+
+.card{background:hsl(var(--b2));padding:40px 36px 32px;border-radius:24px;border:none;
+  max-width:380px;width:100%;
+  box-shadow:0 1px 3px hsl(var(--n) / 0.04), 0 12px 40px hsl(var(--n) / 0.12);
+  animation:cardIn .35s cubic-bezier(0.2, 0.9, 0.3, 1.1)}
+@keyframes cardIn{from{transform:translateY(8px) scale(.98);opacity:0}to{transform:none;opacity:1}}
+
+.brand{display:flex;align-items:center;justify-content:center;
+  width:56px;height:56px;margin:0 auto 18px;border-radius:18px;
+  background:hsl(var(--p));color:hsl(var(--pc));
+  box-shadow:0 4px 14px hsl(var(--p) / 0.28)}
+.brand [data-lucide]{width:28px;height:28px;stroke-width:2}
+
+h1{font-size:22px;margin-bottom:4px;color:hsl(var(--bc));text-align:center;font-weight:600;letter-spacing:-0.02em}
+.tag{text-align:center;color:hsl(var(--bc) / 0.55);font-size:13px;margin-bottom:28px}
+
+/* Scope to .card so specificity beats Tailwind preflight's bare-element resets
+   (input{padding:0;border-radius:0}, button{background-color:transparent}). */
+.card input{width:100%;padding:13px 14px;background:hsl(var(--b1));color:hsl(var(--bc));
+  border:none;border-radius:12px;font-size:15px;margin-bottom:10px;
+  transition:outline-offset .15s, outline-color .15s;outline:2px solid transparent;outline-offset:0}
+.card input:focus{outline:2px solid hsl(var(--p) / 0.5);outline-offset:0}
+.card input::placeholder{color:hsl(var(--bc) / 0.4)}
+
+.card button{width:100%;padding:13px;background:hsl(var(--p));color:hsl(var(--pc));border:none;
+  border-radius:999px;font-size:15px;font-weight:600;cursor:pointer;margin-top:8px;
+  transition:all .2s ease-out;letter-spacing:-0.005em;appearance:none;-webkit-appearance:none}
+.card button:hover{transform:translateY(-1px);box-shadow:0 6px 16px hsl(var(--p) / 0.32)}
+.card button:active{transform:scale(.97)}
+
+.err{color:hsl(var(--er));font-size:13px;margin-top:10px;text-align:center;min-height:20px}
 </style>
 </head><body>
 <form class="card" onsubmit="event.preventDefault();login()">
-  <h1>👥 人臉命名工具</h1>
+  <div class="brand"><i data-lucide="image"></i></div>
+  <h1>Local Album</h1>
+  <div class="tag">登入以瀏覽相簿</div>
   <input id="u" type="text" placeholder="使用者名稱" autofocus autocomplete="username">
   <input id="p" type="password" placeholder="密碼" autocomplete="current-password">
   <button type="submit">登入</button>
