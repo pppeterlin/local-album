@@ -2,26 +2,60 @@
 <html data-theme="morandi"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>管理 · 人臉命名工具</title>
+<title>管理 · Local Album</title>
 <!--V05_ASSETS-->
 <style>
 /* v0.5 Phase 4: Morandi restyle of admin. Class names preserved, JS untouched. */
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,sans-serif;background:hsl(var(--b1));color:hsl(var(--bc));padding:20px;max-width:1100px;margin:0 auto;line-height:1.5}
+html,body{background:hsl(var(--b1))}
+/* !important to defeat Tailwind Play CDN preflight's body{margin:0} which
+   is injected after our <style> in cascade order. */
+body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,sans-serif;
+  color:hsl(var(--bc));padding:24px 28px 80px;line-height:1.5;
+  max-width:1400px !important;margin:0 auto !important;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;letter-spacing:-0.005em;
+  display:grid;grid-template-columns:200px 1fr;grid-template-rows:auto 1fr;
+  grid-template-areas:"header header" "sidebar main";gap:8px 36px;align-items:start}
+@media (min-width:1900px){ body{max-width:1700px !important} }
+@media (min-width:2400px){ body{max-width:2000px !important} }
+@media (max-width:768px){
+  body{grid-template-columns:1fr;grid-template-areas:"header" "sidebar" "main";gap:8px}
+}
+/* Direct children get placed into grid areas via class */
+.admin-header{grid-area:header}
+.tabs{grid-area:sidebar}
+.panel{grid-area:main}
 a{color:hsl(var(--p));text-decoration:none}
 
-.userbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;color:hsl(var(--bc) / 0.55);font-size:13px}
-.userbar .who{color:hsl(var(--p));font-weight:500}
-.userbar a,.userbar button{padding:6px 12px;background:hsl(var(--b2));color:hsl(var(--bc) / 0.7);border:1px solid hsl(var(--b3));border-radius:6px;font-size:12px;cursor:pointer;text-decoration:none;margin-left:6px;transition:all .2s ease-out}
-.userbar a:hover,.userbar button:hover{background:hsl(var(--b3));color:hsl(var(--bc));transform:translateY(-1px)}
-.userbar a:active,.userbar button:active{transform:scale(.97)}
+/* lucide icons */
+[data-lucide]{display:block;width:1em;height:1em;stroke-width:1.75;flex-shrink:0}
 
-h1{font-size:22px;color:hsl(var(--p));margin-bottom:14px;font-weight:500}
+.userbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;color:hsl(var(--bc) / 0.7);font-size:14px;gap:12px;flex-wrap:wrap;line-height:1}
+.userbar > div{display:flex;align-items:center;gap:10px}
+.userbar .who{color:hsl(var(--bc));font-weight:500}
+.userbar a,.userbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:8px 14px;background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:999px;
+  font-size:13px;cursor:pointer;text-decoration:none;transition:all .2s ease-out;line-height:1}
+.userbar a:hover,.userbar button:hover{background:hsl(var(--b3));transform:translateY(-1px);box-shadow:0 2px 8px hsl(var(--n) / 0.06)}
+.userbar a:active,.userbar button:active{transform:scale(.96)}
 
-.tabs{display:flex;gap:6px;margin-bottom:18px;border-bottom:1px solid hsl(var(--b3))}
-.tabs button{padding:10px 18px;background:none;border:none;color:hsl(var(--bc) / 0.55);font-size:14px;cursor:pointer;border-bottom:2px solid transparent;transition:color .2s, border-color .3s ease-in-out}
-.tabs button:hover{color:hsl(var(--bc))}
-.tabs button.active{color:hsl(var(--p));border-color:hsl(var(--p))}
+h1{font-size:28px;color:hsl(var(--bc));margin:8px 0 16px;font-weight:600;letter-spacing:-0.02em;
+  display:flex;align-items:center;gap:10px}
+
+/* Vertical sidebar tabs (iOS Settings-style) */
+.tabs{display:flex;flex-direction:column;gap:2px;padding:4px;position:sticky;top:24px}
+.tabs button{display:flex;align-items:center;gap:10px;padding:10px 14px;background:transparent;
+  border:none;color:hsl(var(--bc) / 0.75);font-size:14px;font-weight:500;cursor:pointer;
+  border-radius:10px;text-align:left;transition:all .15s ease-out}
+.tabs button:hover{background:hsl(var(--b2));color:hsl(var(--bc))}
+.tabs button.active{background:hsl(var(--p));color:hsl(var(--pc));box-shadow:0 1px 4px hsl(var(--p) / 0.2)}
+.tabs button.active:hover{background:hsl(var(--p));color:hsl(var(--pc))}
+@media (max-width:768px){
+  .tabs{flex-direction:row;overflow-x:auto;padding:0;position:static;
+    margin:0 -12px;padding:0 12px;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{flex-shrink:0;padding:8px 14px}
+}
 
 .panel{display:none}
 .panel.active{display:block}
@@ -62,14 +96,22 @@ th{color:hsl(var(--bc) / 0.55);font-weight:500;font-size:12px}
 
 /* group editor */
 .editor h3{font-size:14px;color:hsl(var(--in));margin:10px 0 8px;font-weight:500}
-.face-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;max-height:380px;overflow-y:auto;padding:6px;background:hsl(var(--b1));border:1px solid hsl(var(--b3));border-radius:8px}
-.face-item{position:relative;background:hsl(var(--b2));border:2px solid transparent;border-radius:8px;cursor:pointer;overflow:hidden;text-align:center;transition:transform .2s, border-color .2s}
+.face-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;max-height:700px;overflow-y:auto;padding:12px;background:hsl(var(--b1));border:1px solid hsl(var(--b3));border-radius:12px}
+/* face-item: square tile via aspect-ratio + background-image. No <img> tag,
+   so Tailwind preflight's img reset cannot interfere. */
+.face-item{position:relative;background-color:hsl(var(--b2));background-size:cover;background-position:center;
+  border:2px solid transparent;border-radius:12px;cursor:pointer;overflow:hidden;
+  transition:transform .2s, border-color .2s;aspect-ratio:1}
 .face-item:hover{transform:translateY(-2px)}
 .face-item.on{border-color:hsl(var(--p))}
-.face-item img{width:100%;height:90px;object-fit:cover;display:block;background:hsl(var(--b3))}
-.face-item .meta{padding:4px 6px;font-size:11px;color:hsl(var(--bc) / 0.7);line-height:1.3}
-.face-item .meta .n{color:hsl(var(--bc));display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.face-item.on::after{content:"✓";position:absolute;top:4px;right:6px;background:hsl(var(--p));color:hsl(var(--pc));width:18px;height:18px;border-radius:50%;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+/* Hide any stray <img> (legacy markup) — we use background-image now */
+.face-item > img{display:none !important}
+.face-item .meta{position:absolute;left:0;right:0;bottom:0;padding:20px 8px 8px;
+  font-size:12px;color:#fff;line-height:1.3;
+  background:linear-gradient(to top, hsl(0 0% 0% / 0.6), hsl(0 0% 0% / 0))}
+.face-item .meta .n{color:#fff;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;text-shadow:0 1px 2px hsl(0 0% 0% / 0.5)}
+.face-item .meta span:not(.n){color:hsl(0 0% 100% / 0.85) !important;text-shadow:0 1px 2px hsl(0 0% 0% / 0.5)}
+.face-item.on::after{content:"✓";position:absolute;top:6px;right:6px;background:hsl(var(--p));color:hsl(var(--pc));width:22px;height:22px;border-radius:50%;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;z-index:2;box-shadow:0 1px 4px hsl(0 0% 0% / 0.25)}
 
 .path-list{max-height:240px;overflow-y:auto;background:hsl(var(--b1));border:1px solid hsl(var(--b3));border-radius:8px;padding:6px}
 .path-row{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;transition:background .15s}
@@ -94,7 +136,7 @@ input[type=checkbox]{accent-color:hsl(var(--p))}
 .rel-face{display:flex;gap:8px;align-items:center;padding:6px;border-radius:8px;cursor:pointer;margin-bottom:4px;transition:background .15s}
 .rel-face:hover{background:hsl(var(--b3))}
 .rel-face.in-graph{opacity:.35;cursor:default}
-.rel-face img{width:36px;height:36px;border-radius:50%;object-fit:cover;background:hsl(var(--b3))}
+.rel-face img{width:36px;height:36px !important;border-radius:50%;object-fit:cover;background:hsl(var(--b3));flex-shrink:0}
 .rel-face .n{font-size:12px;color:hsl(var(--bc));line-height:1.2;flex:1}
 .rel-face .n .fid{color:hsl(var(--bc) / 0.45);font-size:10px;font-family:monospace;display:block}
 
@@ -117,21 +159,22 @@ input[type=checkbox]{accent-color:hsl(var(--p))}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 </head><body>
-<div class="userbar">
-  <div>👤 <span class="who">__USER__</span> <span style="color:#666;font-size:11px">(admin)</span></div>
-  <div>
-    <a href="/">← 回相簿</a>
-    <button onclick="logout()">登出</button>
+<div class="admin-header">
+  <div class="userbar">
+    <div><i data-lucide="user"></i> <span class="who">__USER__</span> <span style="color:hsl(var(--bc) / 0.4);font-size:12px">(admin)</span></div>
+    <div>
+      <a href="/"><i data-lucide="arrow-left"></i> 回相簿</a>
+      <button onclick="logout()"><i data-lucide="log-out"></i> 登出</button>
+    </div>
   </div>
+  <h1>管理</h1>
+  <div class="msg" id="msg"></div>
 </div>
 
-<h1>⚙️ 管理</h1>
-<div class="msg" id="msg"></div>
-
 <div class="tabs">
-  <button class="active" data-tab="users" onclick="switchTab('users')">使用者</button>
-  <button data-tab="groups" onclick="switchTab('groups')">群組</button>
-  <button data-tab="rels" onclick="switchTab('rels')">關係圖</button>
+  <button class="active" data-tab="users" onclick="switchTab('users')"><i data-lucide="users"></i> 使用者</button>
+  <button data-tab="groups" onclick="switchTab('groups')"><i data-lucide="users-round"></i> 群組</button>
+  <button data-tab="rels" onclick="switchTab('rels')"><i data-lucide="git-fork"></i> 關係圖</button>
 </div>
 
 <!-- USERS -->
@@ -373,16 +416,16 @@ function renderGroups(){
     const blocked = new Set(g.blocked_paths||[]);
     const faceGrid = FACES.map(f=>{
       const on = allowedFaces.has(f.id);
-      return `<div class="face-item ${on?'on':''}" data-fid="${escapeHtml(f.id)}" onclick="toggleFace(this)">
-        <img src="/thumb/${escapeHtml(f.id)}.jpg?v=${f.thumb_ver}" loading="lazy">
-        <div class="meta"><span class="n">${escapeHtml(f.name)}</span><span style="color:#666">${f.count}</span></div>
+      const bg = `/thumb/${escapeHtml(f.id)}.jpg?v=${f.thumb_ver}`;
+      return `<div class="face-item ${on?'on':''}" data-fid="${escapeHtml(f.id)}" onclick="toggleFace(this)" style="background-image:url('${bg}')">
+        <div class="meta"><span class="n">${escapeHtml(f.name)}</span><span>${f.count}</span></div>
       </div>`;
     }).join('') || '<span class="muted">（尚無命名的人臉群組）</span>';
     const petGrid = PETS.map(p=>{
       const on = allowedPets.has(p.id);
-      return `<div class="face-item pet ${on?'on':''}" data-pid="${escapeHtml(p.id)}" onclick="togglePet(this)">
-        <img src="/pet_thumb/${escapeHtml(p.id)}.jpg?v=${p.thumb_ver}" loading="lazy">
-        <div class="meta"><span class="n">${escapeHtml(p.name)}</span><span style="color:#666">${p.count}</span></div>
+      const bg = `/pet_thumb/${escapeHtml(p.id)}.jpg?v=${p.thumb_ver}`;
+      return `<div class="face-item pet ${on?'on':''}" data-pid="${escapeHtml(p.id)}" onclick="togglePet(this)" style="background-image:url('${bg}')">
+        <div class="meta"><span class="n">${escapeHtml(p.name)}</span><span>${p.count}</span></div>
       </div>`;
     }).join('') || '<span class="muted">（尚無命名的寵物群組）</span>';
     const pathRows = PATHS.map(p=>{
