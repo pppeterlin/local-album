@@ -3,230 +3,356 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>人臉命名工具</title>
+<title>Local Album</title>
 <!--USER_INJECT-->
 <!--V05_ASSETS-->
 <style>
-/* v0.5 Phase 2/3: Morandi-themed restyle. All class names preserved so JS stays untouched.
-   Colors reference DaisyUI CSS variables defined in _assets.html ([data-theme="morandi"]).
-   --b1: warm off-white | --b2: card bg | --b3: borders
-   --p:  sage green     | --s: dusty rose | --a: muted lavender | --n: warm dark grey
-   --bc: warm dark grey (text)
+/* v0.5 Phase 2/3 (iOS 26 redesign): generous whitespace, large radii, soft shadows,
+   capsule buttons, segmented tabs, content-first chrome. Class names preserved.
 */
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,sans-serif;
-  background:hsl(var(--b1));color:hsl(var(--bc));padding:20px;line-height:1.5}
-h1{text-align:center;margin-bottom:6px;font-weight:500}
-.subtitle{text-align:center;color:hsl(var(--bc) / 0.55);margin-bottom:14px;font-size:14px}
-.userbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;color:hsl(var(--bc) / 0.55);font-size:13px;flex-wrap:wrap;gap:8px}
-.userbar .who{color:hsl(var(--p));font-weight:500}
-.userbar button{padding:6px 12px;background:hsl(var(--b2));color:hsl(var(--bc) / 0.7);border:1px solid hsl(var(--b3));border-radius:6px;font-size:12px;cursor:pointer;transition:all .2s ease-out}
-.userbar button:hover{background:hsl(var(--b3));color:hsl(var(--bc));transform:translateY(-1px)}
-.userbar button:active{transform:scale(.97)}
+html,body{background:hsl(var(--b1))}
+/* !important on margin to defeat Tailwind Play CDN preflight's body{margin:0}
+   which is injected after our <style> in cascade order. */
+body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,"Inter","Helvetica Neue",sans-serif;
+  color:hsl(var(--bc));padding:24px 28px 80px;line-height:1.5;
+  max-width:1800px !important;margin:0 auto !important;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;letter-spacing:-0.005em}
+@media (min-width:2400px){ body{max-width:2200px !important} }
 
-.toolbar{display:flex;justify-content:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
-.toolbar button{padding:7px 14px;background:hsl(var(--b2));color:hsl(var(--bc) / 0.7);border:1px solid hsl(var(--b3));border-radius:8px;cursor:pointer;font-size:13px;min-height:36px;transition:all .2s ease-out}
-.toolbar button:hover{background:hsl(var(--b3));color:hsl(var(--bc));transform:translateY(-1px);box-shadow:0 2px 6px hsl(var(--n) / 0.08)}
-.toolbar button:active{transform:scale(.97)}
-.toolbar button.active{background:hsl(var(--p));color:hsl(var(--pc));border-color:hsl(var(--p))}
+/* lucide icons — display:block so flex centering works without inline-baseline drift */
+[data-lucide]{display:block;width:1em;height:1em;stroke-width:1.75;flex-shrink:0}
+.icon-btn [data-lucide],
+.userbar .icon-only [data-lucide]{width:18px;height:18px}
 
-.kind-toggle{display:flex;justify-content:center;gap:0;margin-bottom:14px}
-.kind-toggle button{padding:8px 18px;background:hsl(var(--b2));color:hsl(var(--bc) / 0.7);border:1px solid hsl(var(--b3));cursor:pointer;font-size:14px;min-height:40px;transition:all .2s ease-out}
-.kind-toggle button:first-child{border-radius:10px 0 0 10px}
-.kind-toggle button:last-child{border-radius:0 10px 10px 0;border-left:none}
-.kind-toggle button:hover{background:hsl(var(--b3));color:hsl(var(--bc))}
-.kind-toggle button.active{background:hsl(var(--p));color:hsl(var(--pc));border-color:hsl(var(--p))}
+h1{text-align:left;margin:0;font-size:28px;font-weight:600;letter-spacing:-0.02em;color:hsl(var(--bc))}
+.subtitle{color:hsl(var(--bc) / 0.55);margin:-6px 0 18px;font-size:13px}
+
+/* ── Top user bar (iOS-style minimal) ── */
+.userbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;color:hsl(var(--bc) / 0.7);font-size:14px;gap:12px;flex-wrap:wrap}
+.userbar > div{display:flex;align-items:center;gap:10px}
+.userbar .who{color:hsl(var(--bc));font-weight:500}
+#role-tag{color:hsl(var(--bc) / 0.4);font-size:12px;font-weight:400}
+.userbar a,.userbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:8px 14px;background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:999px;
+  font-size:13px;cursor:pointer;text-decoration:none;transition:all .2s ease-out;line-height:1}
+.userbar a:hover,.userbar button:hover{background:hsl(var(--b3));transform:translateY(-1px);box-shadow:0 2px 8px hsl(var(--n) / 0.06)}
+.userbar a:active,.userbar button:active{transform:scale(.96)}
+/* icon-only: borderless, ghost icon button — aligns naturally next to text buttons */
+.userbar .icon-only{background:transparent;padding:6px;border-radius:50%;
+  width:auto;height:auto;color:hsl(var(--bc) / 0.7)}
+.userbar .icon-only:hover{background:hsl(var(--b3));color:hsl(var(--bc));box-shadow:none;transform:translateY(-1px)}
+.userbar .icon-only > *{width:20px;height:20px;display:block}
+
+/* ── Filter toolbar: pill-style action chips ── */
+.toolbar{display:flex;justify-content:flex-start;gap:8px;margin-bottom:20px;flex-wrap:wrap;align-items:center}
+.toolbar button{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:hsl(var(--b2));
+  color:hsl(var(--bc) / 0.75);border:none;border-radius:999px;cursor:pointer;font-size:13px;font-weight:500;
+  min-height:36px;transition:all .2s ease-out}
+.toolbar button:hover{background:hsl(var(--b3));color:hsl(var(--bc));transform:translateY(-1px);box-shadow:0 2px 8px hsl(var(--n) / 0.06)}
+.toolbar button:active{transform:scale(.96)}
+.toolbar button.active{background:hsl(var(--p));color:hsl(var(--pc));box-shadow:0 2px 10px hsl(var(--p) / 0.25)}
+
+/* ── Kind segmented control (face / pet) ── */
+.kind-toggle{display:inline-flex;background:hsl(var(--b2));border-radius:999px;padding:4px;margin-bottom:24px;gap:0}
+.kind-toggle button{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:transparent;
+  color:hsl(var(--bc) / 0.65);border:none;cursor:pointer;font-size:14px;font-weight:500;min-height:36px;
+  border-radius:999px;transition:all .25s ease-out}
+.kind-toggle button:hover{color:hsl(var(--bc))}
+.kind-toggle button.active{background:hsl(var(--b1));color:hsl(var(--bc));box-shadow:0 1px 3px hsl(var(--n) / 0.08), 0 2px 8px hsl(var(--n) / 0.04)}
 .kind-toggle.hidden{display:none}
 
 .admin-only{display:none}
 body.admin .admin-only{display:initial}
 body.admin .admin-only.flex{display:flex}
 body.admin .admin-only.actions{display:flex}
+
+@media (max-width:768px){
+  body{padding:18px 16px 80px}
+  h1{font-size:24px}
+}
 @media (max-width:600px){
-  body{padding:10px}
+  body{padding:14px 12px 80px}
   .grid{grid-template-columns:1fr !important}
   .pager{flex-wrap:wrap}
-  .expand-modal .expand-box{max-height:calc(100vh - 20px) !important;width:100vw !important}
-  .expand-header{padding:10px 14px}
-  .expand-header h3{font-size:15px}
-  .modal-box{padding:18px}
+  .expand-modal .expand-box{max-height:calc(100vh - 16px) !important;width:100vw !important;border-radius:20px 20px 0 0 !important}
+  .expand-header{padding:14px 18px}
+  .expand-header h3{font-size:16px}
+  .modal-box{padding:22px}
   .face-thumb{width:80px !important;height:80px !important}
   .card-top{grid-template-columns:1fr 80px !important}
 }
 
-.stats{text-align:center;margin-bottom:16px;color:hsl(var(--bc) / 0.55);font-size:13px}
-.pager{display:flex;justify-content:center;align-items:center;gap:10px;margin:18px 0}
-.pager button{padding:8px 16px;background:hsl(var(--b2));color:hsl(var(--bc));border:1px solid hsl(var(--b3));border-radius:8px;cursor:pointer;transition:all .2s ease-out}
+.stats{color:hsl(var(--bc) / 0.55);font-size:13px;margin-bottom:16px}
+.pager{display:flex;justify-content:center;align-items:center;gap:8px;margin:24px 0}
+.pager button{display:inline-flex;align-items:center;justify-content:center;padding:8px 14px;min-width:38px;height:38px;
+  background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:999px;cursor:pointer;font-size:13px;font-weight:500;
+  transition:all .2s ease-out}
 .pager button:hover:not(:disabled){background:hsl(var(--b3));transform:translateY(-1px)}
-.pager button:active:not(:disabled){transform:scale(.97)}
-.pager button:disabled{opacity:.35;cursor:not-allowed}
-.pager input{width:56px;padding:6px;text-align:center;background:hsl(var(--b1));color:hsl(var(--bc));border:1px solid hsl(var(--b3));border-radius:6px}
-.pager input:focus{border-color:hsl(var(--p));outline:none}
-.pager .info{color:hsl(var(--bc) / 0.55);font-size:13px}
+.pager button:active:not(:disabled){transform:scale(.96)}
+.pager button:disabled{opacity:.3;cursor:not-allowed}
+.pager input{width:56px;height:38px;padding:6px;text-align:center;background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:12px;font-size:13px}
+.pager input:focus{outline:2px solid hsl(var(--p) / 0.4);outline-offset:0}
+.pager .info{color:hsl(var(--bc) / 0.55);font-size:13px;margin:0 6px}
 
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px}
-/* viewer-only tile mode: 大頭像 + 名字，整塊可點 */
-body:not(.admin) .grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
-body:not(.admin) .tile{background:hsl(var(--b2));border:1px solid hsl(var(--b3));border-radius:16px;padding:14px 10px;cursor:pointer;text-align:center;
-  transition:transform .25s ease-out, border-color .2s, box-shadow .25s;
+/* ── Grid ────────────────────────────────────────────────────────────
+   Explicit breakpoints so layouts feel deliberate, not auto-fill artifacts.
+   Grid is centered horizontally within body via margin auto.
+   align-items:start keeps cards top-aligned so taller cards don't
+   stretch shorter neighbors and create "missing slot" visual artifacts.
+*/
+.grid{display:grid;gap:18px;margin-left:auto;margin-right:auto;align-items:start;width:100%}
+
+/* admin cluster-card grid: rich content, wide cards
+   14" MBP (≤1800 logical width)  → 3 cols
+   27" / 32" external display     → 4 cols (user-requested)
+   Ultra-wide (≥2600px)           → 5 cols */
+body.admin .grid{grid-template-columns:1fr;max-width:560px}
+@media (min-width:720px)  { body.admin .grid{grid-template-columns:repeat(2,1fr); max-width:1100px} }
+@media (min-width:1200px) { body.admin .grid{grid-template-columns:repeat(3,1fr); max-width:1500px} }
+@media (min-width:1900px) { body.admin .grid{grid-template-columns:repeat(4,1fr); max-width:1900px} }
+@media (min-width:2600px) { body.admin .grid{grid-template-columns:repeat(5,1fr); max-width:2300px} }
+@media (min-width:3200px) { body.admin .grid{grid-template-columns:repeat(6,1fr); max-width:2700px} }
+
+/* viewer tile grid: small content (avatar + name), wider on big screens */
+body:not(.admin) .grid{
+  grid-template-columns:repeat(2,1fr);
+  gap:22px;
+  max-width:520px;
+}
+@media (min-width:600px)  { body:not(.admin) .grid{grid-template-columns:repeat(3,1fr); max-width:820px} }
+@media (min-width:1200px) { body:not(.admin) .grid{grid-template-columns:repeat(4,1fr); max-width:1100px} }
+@media (min-width:1700px) { body:not(.admin) .grid{grid-template-columns:repeat(5,1fr); max-width:1400px} }
+@media (min-width:2200px) { body:not(.admin) .grid{grid-template-columns:repeat(6,1fr); max-width:1700px} }
+@media (min-width:2800px) { body:not(.admin) .grid{grid-template-columns:repeat(7,1fr); max-width:2000px} }
+
+body:not(.admin) .tile{background:transparent;border:none;border-radius:20px;padding:14px 8px;cursor:pointer;text-align:center;
+  transition:transform .25s ease-out, background .2s ease-out;
   user-select:none;-webkit-tap-highlight-color:transparent}
-body:not(.admin) .tile:hover{transform:translateY(-3px);border-color:hsl(var(--p));box-shadow:0 6px 16px hsl(var(--n) / 0.12)}
-body:not(.admin) .tile:active{transform:scale(.97)}
-body:not(.admin) .tile .avatar{width:100%;aspect-ratio:1;border-radius:50%;object-fit:cover;background:hsl(var(--b3));display:block;margin:0 auto 10px;border:2px solid hsl(var(--b3));transition:border-color .2s}
-body:not(.admin) .tile:hover .avatar{border-color:hsl(var(--p))}
-body:not(.admin) .tile .tname{font-size:15px;color:hsl(var(--bc));font-weight:500;line-height:1.3;word-break:break-word}
-body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin-top:3px}
+body:not(.admin) .tile:hover{transform:translateY(-3px);background:hsl(var(--b2))}
+body:not(.admin) .tile:active{transform:scale(.96)}
+body:not(.admin) .tile .avatar{width:100%;aspect-ratio:1;border-radius:50%;object-fit:cover;background:hsl(var(--b2));
+  display:block;margin:0 auto 12px;border:none;box-shadow:0 1px 3px hsl(var(--n) / 0.06), 0 4px 16px hsl(var(--n) / 0.06);
+  transition:box-shadow .25s ease-out}
+body:not(.admin) .tile:hover .avatar{box-shadow:0 4px 8px hsl(var(--n) / 0.10), 0 12px 28px hsl(var(--n) / 0.12)}
+body:not(.admin) .tile .tname{font-size:15px;color:hsl(var(--bc));font-weight:500;line-height:1.3;word-break:break-word;letter-spacing:-0.01em}
+body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin-top:4px}
 @media (max-width:480px){
-  body:not(.admin) .grid{grid-template-columns:repeat(2,1fr);gap:10px}
-  body:not(.admin) .tile{padding:10px 8px}
+  body:not(.admin) .tile{padding:10px 4px}
   body:not(.admin) .tile .tname{font-size:14px}
 }
-@media (min-width:481px) and (max-width:768px){
-  body:not(.admin) .grid{grid-template-columns:repeat(3,1fr)}
-}
-@media (max-width:600px){
-  body:not(.admin) .grid{grid-template-columns:repeat(2,1fr) !important}
-}
 
-.list{display:flex;flex-direction:column;gap:6px}
-.list-row{display:grid;grid-template-columns:48px 90px 1fr 80px auto;align-items:center;gap:14px;background:hsl(var(--b2));border:1px solid hsl(var(--b3));border-radius:10px;padding:8px 14px;transition:border-color .2s, box-shadow .2s}
-.list-row:hover{border-color:hsl(var(--p) / 0.5);box-shadow:0 2px 8px hsl(var(--n) / 0.06)}
-.list-row .lr-thumb{width:40px;height:40px;border-radius:50%;object-fit:cover;border:2px solid hsl(var(--p))}
-.list-row .lr-id{color:hsl(var(--bc) / 0.55);font-size:12px;font-family:monospace}
-.list-row .lr-name{color:hsl(var(--p));font-weight:600;font-size:15px;cursor:text;padding:4px 8px;border-radius:6px;min-height:28px;transition:background .15s}
-.list-row .lr-name:hover{background:hsl(var(--b3) / 0.5)}
-.list-row .lr-name-input{width:100%;padding:5px 8px;background:hsl(var(--b1));color:hsl(var(--bc));border:1px solid hsl(var(--p));border-radius:6px;font-size:14px}
+/* ── List row (admin "list mode" for named clusters) ── */
+.list{display:flex;flex-direction:column;gap:8px}
+.list-row{display:grid;grid-template-columns:48px 90px 1fr 80px auto;align-items:center;gap:14px;
+  background:hsl(var(--b2));border:none;border-radius:14px;padding:10px 16px;
+  transition:transform .2s, box-shadow .2s, background .2s}
+.list-row:hover{background:hsl(var(--b3) / 0.6);transform:translateY(-1px);box-shadow:0 2px 10px hsl(var(--n) / 0.06)}
+.list-row .lr-thumb{width:40px;height:40px !important;border-radius:50%;object-fit:cover;flex-shrink:0}
+.list-row .lr-id{color:hsl(var(--bc) / 0.45);font-size:12px;font-family:"SF Mono",ui-monospace,monospace}
+.list-row .lr-name{color:hsl(var(--bc));font-weight:600;font-size:15px;cursor:text;padding:4px 8px;border-radius:8px;min-height:28px;transition:background .15s;letter-spacing:-0.01em}
+.list-row .lr-name:hover{background:hsl(var(--b1) / 0.7)}
+.list-row .lr-name-input{width:100%;padding:6px 10px;background:hsl(var(--b1));color:hsl(var(--bc));border:none;border-radius:8px;font-size:14px;outline:2px solid hsl(var(--p) / 0.4)}
 .list-row .lr-count{color:hsl(var(--bc) / 0.55);font-size:13px;text-align:right}
-.list-row .lr-actions{display:flex;gap:6px}
-.list-row .lr-actions button{padding:5px 10px;font-size:12px;border-radius:6px;border:1px solid hsl(var(--b3));background:hsl(var(--b1));color:hsl(var(--bc) / 0.75);cursor:pointer;transition:all .2s ease-out}
+.list-row .lr-actions{display:flex;gap:4px}
+.list-row .lr-actions button{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:6px 12px;font-size:12px;font-weight:500;border-radius:999px;border:none;background:hsl(var(--b1));color:hsl(var(--bc) / 0.75);cursor:pointer;transition:all .2s ease-out}
 .list-row .lr-actions button:hover{background:hsl(var(--b3));color:hsl(var(--bc));transform:translateY(-1px)}
-.list-row .lr-actions button:active{transform:scale(.97)}
+.list-row .lr-actions button:active{transform:scale(.96)}
 
-.card{position:relative;background:hsl(var(--b2));border-radius:14px;border:2px solid hsl(var(--b3));overflow:hidden;transition:all .25s ease-out}
-.card:hover{border-color:hsl(var(--p) / 0.5);transform:translateY(-2px);box-shadow:0 4px 14px hsl(var(--n) / 0.10)}
-.card.named{border-color:hsl(var(--p))}
-.card.cluster-selected{border-color:hsl(var(--wa));box-shadow:0 0 0 2px hsl(var(--wa) / 0.25) inset}
-.card.skipped{opacity:.55;border-color:hsl(var(--b3));background:hsl(var(--b1))}
+/* ── Cluster card (naming UI) ── */
+.card{position:relative;background:hsl(var(--b2));border-radius:20px;border:none;overflow:hidden;
+  transition:transform .25s ease-out, box-shadow .25s ease-out, background .2s;
+  box-shadow:0 1px 3px hsl(var(--n) / 0.04)}
+.card:hover{transform:translateY(-2px);box-shadow:0 4px 16px hsl(var(--n) / 0.08), 0 1px 3px hsl(var(--n) / 0.04)}
+.card.named{box-shadow:0 0 0 1.5px hsl(var(--p) / 0.5), 0 1px 3px hsl(var(--n) / 0.04)}
+.card.named:hover{box-shadow:0 0 0 1.5px hsl(var(--p) / 0.6), 0 4px 16px hsl(var(--n) / 0.08)}
+.card.cluster-selected{box-shadow:0 0 0 2px hsl(var(--wa)), 0 4px 16px hsl(var(--wa) / 0.18)}
+.card.skipped{opacity:.5;background:hsl(var(--b2) / 0.5)}
 .card.skipped .face-meta h3{color:hsl(var(--bc) / 0.45)}
-.cluster-cb{position:absolute;top:8px;right:8px;width:24px;height:24px;accent-color:hsl(var(--p));cursor:pointer;z-index:5;background:hsl(var(--b1) / 0.85);border-radius:4px;padding:1px}
-#clusterSelectBtn.active{background:hsl(var(--p));color:hsl(var(--pc));border-color:hsl(var(--p))}
-.card-top{display:grid;grid-template-columns:1fr 100px;gap:12px;padding:14px}
-.face-meta h3{color:hsl(var(--p));font-size:17px;margin-bottom:4px;font-weight:500}
+.cluster-cb{position:absolute;top:10px;right:10px;width:24px;height:24px;accent-color:hsl(var(--p));
+  cursor:pointer;z-index:5;background:hsl(var(--b1) / 0.9);border-radius:6px;padding:1px;
+  backdrop-filter:blur(8px);box-shadow:0 1px 4px hsl(var(--n) / 0.1)}
+#clusterSelectBtn.active{background:hsl(var(--p));color:hsl(var(--pc));box-shadow:0 2px 10px hsl(var(--p) / 0.25)}
+.card-top{display:grid;grid-template-columns:1fr 100px;gap:16px;padding:18px 18px 14px}
+.face-meta h3{color:hsl(var(--bc));font-size:17px;margin-bottom:4px;font-weight:600;letter-spacing:-0.015em}
 .face-meta .count{color:hsl(var(--bc) / 0.55);font-size:13px}
-.face-meta .named-label{color:hsl(var(--p));font-weight:600;font-size:15px;margin-top:6px}
-.face-meta .merged-badge{display:inline-block;margin-top:6px;padding:2px 8px;background:hsl(var(--a) / 0.18);color:hsl(var(--a));font-size:11px;border-radius:6px}
-.face-thumb{width:100px;height:100px;border-radius:50%;object-fit:cover;border:3px solid hsl(var(--p))}
-.card.skipped .face-thumb{border-color:hsl(var(--bc) / 0.3)}
+.face-meta .named-label{color:hsl(var(--bc));font-weight:600;font-size:16px;margin-top:8px;letter-spacing:-0.015em}
+.face-meta .merged-badge{display:inline-flex;align-items:center;gap:4px;margin-top:8px;padding:3px 10px;
+  background:hsl(var(--a) / 0.15);color:hsl(var(--a));font-size:11px;border-radius:999px;font-weight:500}
+.face-thumb{width:100px;height:100px !important;border-radius:50%;object-fit:cover;border:none;box-shadow:0 2px 8px hsl(var(--n) / 0.10);flex-shrink:0}
+.card.named .face-thumb{box-shadow:0 0 0 2px hsl(var(--p) / 0.5), 0 2px 8px hsl(var(--n) / 0.10)}
+.card.skipped .face-thumb{opacity:.6}
 
-.photo-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;padding:0 3px}
+.photo-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;padding:0}
 .photo-grid img{width:100%;aspect-ratio:1;object-fit:cover;cursor:pointer;transition:opacity .15s}
-.photo-grid img:hover{opacity:.8}
+.photo-grid img:hover{opacity:.85}
 
-.expand-bar{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:hsl(var(--b3) / 0.4);border-top:1px solid hsl(var(--b3));cursor:pointer;font-size:13px;color:hsl(var(--bc) / 0.7);transition:background .15s, color .15s}
-.expand-bar:hover{background:hsl(var(--b3) / 0.7);color:hsl(var(--bc))}
+.expand-bar{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;
+  background:transparent;border-top:1px solid hsl(var(--b3) / 0.5);cursor:pointer;
+  font-size:13px;color:hsl(var(--bc) / 0.7);transition:background .15s, color .15s;font-weight:500}
+.expand-bar:hover{background:hsl(var(--b3) / 0.5);color:hsl(var(--bc))}
 
 .expand-photos{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
 .expand-photos .thumb-wrap{position:relative}
-.expand-photos img{width:100%;aspect-ratio:1;object-fit:cover;cursor:pointer}
-.expand-photos .thumb-actions{position:absolute;top:2px;right:2px;display:flex;gap:3px;opacity:0;transition:opacity .15s}
+.expand-photos img{width:100%;aspect-ratio:1;object-fit:cover;cursor:pointer;border-radius:6px}
+.expand-photos .thumb-actions{position:absolute;top:4px;right:4px;display:flex;gap:4px;opacity:0;transition:opacity .15s}
 .expand-photos .thumb-wrap:hover .thumb-actions{opacity:1}
 .expand-photos .thumb-wrap.selectable img{cursor:pointer}
-.expand-photos .thumb-wrap.selected{outline:3px solid hsl(var(--p));outline-offset:-3px}
-.expand-photos .thumb-wrap.selected::after{content:'✓';position:absolute;top:4px;left:4px;width:22px;height:22px;background:hsl(var(--p));color:hsl(var(--pc));border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700}
-.expand-photos .thumb-actions button{width:22px;height:22px;border-radius:50%;border:none;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;color:hsl(var(--erc));padding:0;transition:transform .15s}
+.expand-photos .thumb-wrap.selected img{opacity:.85}
+.expand-photos .thumb-wrap.selected{outline:2.5px solid hsl(var(--p));outline-offset:-2.5px;border-radius:8px}
+.expand-photos .thumb-wrap.selected::after{content:'';position:absolute;top:6px;left:6px;width:22px;height:22px;background:hsl(var(--p));border-radius:50%;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+  background-repeat:no-repeat;background-position:center;box-shadow:0 1px 4px hsl(var(--n) / 0.2)}
+.expand-photos .thumb-actions button{width:28px;height:28px;border-radius:50%;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;color:white;padding:0;
+  background:hsl(var(--n) / 0.7);backdrop-filter:blur(8px);transition:transform .15s, background .15s}
 .expand-photos .thumb-actions button:hover{transform:scale(1.1)}
-.expand-photos .move-btn{background:hsl(var(--su))}
-.expand-photos .remove-btn{background:hsl(var(--er))}
-.expand-photos .thumb-btn{background:hsl(var(--wa))}
+.expand-photos .thumb-actions button [data-lucide]{width:14px;height:14px;stroke-width:2.25}
+.expand-photos .move-btn:hover{background:hsl(var(--su) / 0.95)}
+.expand-photos .remove-btn:hover{background:hsl(var(--er) / 0.95)}
+.expand-photos .thumb-btn:hover{background:hsl(var(--wa) / 0.95)}
 
-.expand-tools{display:flex;gap:8px;padding:4px 0 10px;align-items:center}
-.expand-tools button{padding:5px 12px;font-size:12px;border-radius:6px;border:1px solid hsl(var(--b3));background:hsl(var(--b2));color:hsl(var(--bc) / 0.75);cursor:pointer;transition:all .2s ease-out}
+.expand-tools{display:flex;gap:6px;padding:6px 0 14px;align-items:center;flex-wrap:wrap}
+.expand-tools button{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;font-size:12px;font-weight:500;
+  border-radius:999px;border:none;background:hsl(var(--b2));color:hsl(var(--bc) / 0.75);cursor:pointer;transition:all .2s ease-out}
 .expand-tools button:hover{background:hsl(var(--b3));color:hsl(var(--bc))}
-.expand-tools button:active{transform:scale(.97)}
-.expand-tools button.active{background:hsl(var(--p));color:hsl(var(--pc));border-color:hsl(var(--p))}
-.expand-tools .hint{color:hsl(var(--bc) / 0.45);font-size:11px;margin-left:4px}
+.expand-tools button:active{transform:scale(.96)}
+.expand-tools button.active{background:hsl(var(--p));color:hsl(var(--pc))}
+.expand-tools .hint{color:hsl(var(--bc) / 0.45);font-size:11px;margin-left:6px}
 
-.select-bar{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:hsl(var(--b2));border:2px solid hsl(var(--p));border-radius:30px;padding:10px 22px;box-shadow:0 6px 24px hsl(var(--n) / 0.18);gap:12px;align-items:center;z-index:200}
-.select-bar.active{display:flex}
-.select-bar .count{color:hsl(var(--p));font-weight:600}
-.select-bar button{padding:7px 14px;border-radius:18px;border:none;cursor:pointer;font-size:13px;font-weight:600;transition:transform .15s}
+/* ── Floating action bar (multi-select context) ── */
+.select-bar{display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+  background:hsl(var(--b1) / 0.85);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border:1px solid hsl(var(--b3) / 0.5);border-radius:999px;padding:10px 16px;
+  box-shadow:0 8px 32px hsl(var(--n) / 0.16), 0 2px 8px hsl(var(--n) / 0.06);
+  gap:8px;align-items:center;z-index:200}
+.select-bar.active{display:flex;animation:selectBarSlideUp .3s ease-out}
+@keyframes selectBarSlideUp{from{transform:translateX(-50%) translateY(20px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
+.select-bar .count{color:hsl(var(--bc));font-weight:600;padding:0 8px;font-size:13px}
+.select-bar button{display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:999px;
+  border:none;cursor:pointer;font-size:13px;font-weight:500;transition:all .2s ease-out}
 .select-bar button:hover{transform:translateY(-1px)}
-.select-bar button:active{transform:scale(.97)}
+.select-bar button:active{transform:scale(.96)}
 .select-bar .btn-go{background:hsl(var(--p));color:hsl(var(--pc))}
-.select-bar .btn-cancel{background:hsl(var(--b3));color:hsl(var(--bc))}
+.select-bar .btn-go:hover{box-shadow:0 4px 12px hsl(var(--p) / 0.3)}
+.select-bar .btn-cancel{background:transparent;color:hsl(var(--bc) / 0.75)}
+.select-bar .btn-cancel:hover{background:hsl(var(--b3) / 0.6);color:hsl(var(--bc))}
 
-.actions{display:flex;gap:6px;padding:10px 14px;border-top:1px solid hsl(var(--b3));flex-wrap:wrap}
-.actions input{flex:1;min-width:120px;padding:7px 10px;border:1px solid hsl(var(--b3));border-radius:6px;background:hsl(var(--b1));color:hsl(var(--bc));font-size:13px;transition:border-color .15s}
-.actions input:focus{border-color:hsl(var(--p));outline:none}
-.btn{padding:7px 12px;border-radius:6px;cursor:pointer;font-size:13px;border:none;transition:all .2s ease-out}
-.btn:hover{transform:translateY(-1px);box-shadow:0 2px 6px hsl(var(--n) / 0.10)}
-.btn:active{transform:scale(.97)}
+/* ── Card action bar (rename / merge / skip etc.) ── */
+.actions{display:flex;gap:6px;padding:12px 18px 16px;border-top:1px solid hsl(var(--b3) / 0.5);flex-wrap:wrap;align-items:center}
+.actions input{flex:1;min-width:140px;padding:8px 12px;border:none;border-radius:10px;
+  background:hsl(var(--b1));color:hsl(var(--bc));font-size:13px;transition:outline .15s}
+.actions input:focus{outline:2px solid hsl(var(--p) / 0.4);outline-offset:0}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:999px;cursor:pointer;
+  font-size:13px;font-weight:500;border:none;transition:all .2s ease-out;line-height:1}
+.btn:hover{transform:translateY(-1px)}
+.btn:active{transform:scale(.96)}
 .btn-save{background:hsl(var(--p));color:hsl(var(--pc));font-weight:600}
-.btn-edit{background:hsl(var(--b1));color:hsl(var(--p));border:1px solid hsl(var(--b3))}
-.btn-skip{background:hsl(var(--b1));color:hsl(var(--bc) / 0.6);border:1px solid hsl(var(--b3))}
-.btn-merge{background:hsl(var(--b1));color:hsl(var(--a));border:1px solid hsl(var(--b3))}
-.btn-undo{background:hsl(var(--b1));color:hsl(var(--er));border:1px solid hsl(var(--b3))}
+.btn-save:hover{box-shadow:0 2px 10px hsl(var(--p) / 0.3)}
+.btn-edit{background:hsl(var(--b1));color:hsl(var(--bc) / 0.85)}
+.btn-edit:hover{background:hsl(var(--b3))}
+.btn-skip{background:hsl(var(--b1));color:hsl(var(--bc) / 0.6)}
+.btn-skip:hover{background:hsl(var(--b3));color:hsl(var(--bc))}
+.btn-merge{background:hsl(var(--b1));color:hsl(var(--a))}
+.btn-merge:hover{background:hsl(var(--a) / 0.15)}
+.btn-undo{background:hsl(var(--b1));color:hsl(var(--er) / 0.85)}
+.btn-undo:hover{background:hsl(var(--er) / 0.12)}
 
-.modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:hsl(var(--n) / 0.55);backdrop-filter:blur(2px);z-index:100;justify-content:center;align-items:center}
-.modal.active{display:flex;animation:modalFadeIn .2s ease-out}
-@keyframes modalFadeIn{from{opacity:0}to{opacity:1}}
-.modal-box{background:hsl(var(--b1));padding:24px;border-radius:14px;max-width:480px;width:90%;border:1px solid hsl(var(--b3));box-shadow:0 12px 32px hsl(var(--n) / 0.2);animation:modalScaleIn .2s ease-out}
-@keyframes modalScaleIn{from{transform:scale(.95);opacity:0}to{transform:scale(1);opacity:1}}
+/* ── Modals ── */
+.modal{position:fixed;inset:0;background:hsl(var(--n) / 0.40);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);z-index:100;
+  display:flex;justify-content:center;align-items:center;
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .22s ease-out, visibility 0s linear .22s}
+.modal.active{opacity:1;visibility:visible;pointer-events:auto;
+  transition:opacity .22s ease-out, visibility 0s linear 0s}
+.modal-box{background:hsl(var(--b1));padding:28px;border-radius:24px;max-width:480px;width:90%;
+  border:none;box-shadow:0 24px 64px hsl(var(--n) / 0.20), 0 8px 24px hsl(var(--n) / 0.08);
+  transform:scale(.96);transition:transform .22s cubic-bezier(0.2, 0.9, 0.3, 1.1)}
+.modal.active .modal-box{transform:scale(1)}
 
 .expand-modal{align-items:flex-start;padding:24px 0}
-.expand-modal .expand-box{background:hsl(var(--b1));border:1px solid hsl(var(--b3));border-radius:14px;width:min(1400px,95vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column;box-shadow:0 12px 32px hsl(var(--n) / 0.18)}
-.expand-header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid hsl(var(--b3));flex-shrink:0}
-.expand-header h3{color:hsl(var(--p));font-size:18px;font-weight:500}
-.expand-header .meta{color:hsl(var(--bc) / 0.55);font-size:13px;margin-left:10px}
-.expand-header .close{background:hsl(var(--b3));color:hsl(var(--bc));border:none;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:16px;transition:all .2s ease-out}
-.expand-header .close:hover{background:hsl(var(--n) / 0.6);color:hsl(var(--nc));transform:rotate(90deg)}
-.expand-body{padding:14px 20px;overflow-y:auto;flex:1}
-.self-hint{background:hsl(var(--in) / 0.15);border:1px solid hsl(var(--in) / 0.4);color:hsl(var(--in));padding:10px 14px;border-radius:10px;margin-bottom:14px;font-size:13px;line-height:1.5}
+.expand-modal .expand-box{background:hsl(var(--b1));border:none;border-radius:24px;
+  width:min(1400px,95vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column;
+  box-shadow:0 24px 64px hsl(var(--n) / 0.20), 0 8px 24px hsl(var(--n) / 0.08);
+  transform:scale(.96);transition:transform .22s cubic-bezier(0.2, 0.9, 0.3, 1.1)}
+.expand-modal.active .expand-box{transform:scale(1)}
+.expand-header{display:flex;justify-content:space-between;align-items:center;padding:18px 24px;
+  border-bottom:1px solid hsl(var(--b3) / 0.5);flex-shrink:0}
+.expand-header h3{color:hsl(var(--bc));font-size:18px;font-weight:600;letter-spacing:-0.015em}
+.expand-header .meta{color:hsl(var(--bc) / 0.55);font-size:13px;margin-left:12px;font-weight:400}
+.expand-header .close{display:inline-flex;align-items:center;justify-content:center;
+  background:hsl(var(--b2));color:hsl(var(--bc) / 0.7);border:none;width:36px;height:36px;border-radius:50%;
+  cursor:pointer;font-size:0;transition:all .2s ease-out}
+.expand-header .close:hover{background:hsl(var(--b3));color:hsl(var(--bc))}
+.expand-header .close:active{transform:scale(.92)}
+.expand-header .close [data-lucide]{width:18px;height:18px}
+.expand-body{padding:18px 24px 24px;overflow-y:auto;flex:1}
+
+.self-hint{display:flex;align-items:center;gap:10px;background:hsl(var(--in) / 0.12);
+  border:none;color:hsl(var(--in));padding:12px 16px;border-radius:14px;margin-bottom:16px;
+  font-size:13px;line-height:1.55}
+.self-hint [data-lucide]{flex-shrink:0;width:18px;height:18px}
+
 .expand-modal .expand-photos{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
-.expand-modal .expand-photos .thumb-wrap img{border-radius:8px}
+.expand-modal .expand-photos .thumb-wrap img{border-radius:10px}
 .expand-modal .removed-grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px}
 
-.year-filter{display:flex;gap:8px;align-items:center;padding:8px 0 12px;flex-wrap:wrap}
-.year-filter select{padding:6px 10px;background:hsl(var(--b2));color:hsl(var(--bc));border:1px solid hsl(var(--b3));border-radius:6px;font-size:13px}
-.year-filter .clear{padding:4px 10px;background:hsl(var(--b3));color:hsl(var(--bc) / 0.7);border:none;border-radius:6px;cursor:pointer;font-size:12px}
-.year-section{margin-bottom:14px}
-.year-header{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:hsl(var(--b2));color:hsl(var(--p));font-weight:600;border-radius:8px;cursor:pointer;margin-bottom:6px;font-size:14px;
-  position:sticky;top:0;z-index:5;box-shadow:0 2px 6px hsl(var(--n) / 0.08);transition:background .15s}
-.year-header:hover{background:hsl(var(--b3))}
-.year-header .toggle{transition:transform .2s}
-.year-section.collapsed .year-header .toggle{transform:rotate(-90deg)}
+/* ── Year filter / sticky year header ── */
+.year-filter{display:flex;gap:8px;align-items:center;padding:10px 0 14px;flex-wrap:wrap}
+.year-filter select{padding:7px 12px;background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:10px;font-size:13px;cursor:pointer}
+.year-filter .clear{padding:6px 12px;background:transparent;color:hsl(var(--bc) / 0.65);border:none;border-radius:999px;cursor:pointer;font-size:12px;transition:background .15s}
+.year-filter .clear:hover{background:hsl(var(--b3))}
+.year-section{margin-bottom:18px}
+.year-header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;
+  background:hsl(var(--b1) / 0.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  color:hsl(var(--bc));font-weight:600;border-radius:12px;cursor:pointer;margin-bottom:8px;font-size:14px;
+  position:sticky;top:0;z-index:5;letter-spacing:-0.01em;transition:background .15s}
+.year-header:hover{background:hsl(var(--b2))}
+.year-header .toggle{display:inline-flex;align-items:center;justify-content:center;
+  width:24px;height:24px;border-radius:50%;color:hsl(var(--bc) / 0.55);transition:background .15s}
+.year-header:hover .toggle{background:hsl(var(--bc) / 0.06)}
+.year-header .toggle [data-lucide]{width:16px;height:16px}
+/* Two-icon swap (no rotation): chevron-down when expanded, chevron-right when collapsed.
+   Each <span class="toggle"> contains both icons; CSS shows only one. */
+.year-header .toggle .icon-collapsed{display:none}
+.year-section.collapsed .year-header .toggle .icon-expanded{display:none}
+.year-section.collapsed .year-header .toggle .icon-collapsed{display:inline-flex}
 .year-section.collapsed .year-body{display:none}
 
-.modal-box h3{margin-bottom:16px;font-weight:500;color:hsl(var(--bc))}
-.modal-box input[type=text]{width:100%;padding:8px 10px;background:hsl(var(--b2));color:hsl(var(--bc));border:1px solid hsl(var(--b3));border-radius:6px;margin-bottom:8px}
-.modal-box input[type=text]:focus{border-color:hsl(var(--p));outline:none}
-.modal-box select{width:100%;padding:10px;margin-bottom:16px;background:hsl(var(--b2));color:hsl(var(--bc));border:1px solid hsl(var(--b3));border-radius:6px;max-height:300px}
+.modal-box h3{margin-bottom:18px;font-weight:600;color:hsl(var(--bc));font-size:18px;letter-spacing:-0.015em}
+.modal-box input[type=text]{width:100%;padding:10px 14px;background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:12px;margin-bottom:10px;font-size:14px;transition:outline .15s}
+.modal-box input[type=text]:focus{outline:2px solid hsl(var(--p) / 0.4);outline-offset:0}
+.modal-box select{width:100%;padding:12px;margin-bottom:18px;background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:12px;max-height:300px;font-size:14px}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end}
-.spinner{text-align:center;padding:40px;color:hsl(var(--bc) / 0.45)}
+.spinner{text-align:center;padding:48px;color:hsl(var(--bc) / 0.45);font-size:13px}
 
-.removed-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;padding:10px 14px}
+.removed-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;padding:12px 0}
 .removed-grid .thumb-wrap{position:relative}
-.removed-grid img{width:100%;aspect-ratio:1;object-fit:cover;opacity:.4;border-radius:6px}
-.removed-grid .restore-btn{position:absolute;top:2px;right:2px;width:22px;height:22px;border-radius:50%;background:hsl(var(--su));color:hsl(var(--suc));border:none;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:transform .15s}
-.removed-grid .restore-btn:hover{transform:scale(1.1)}
+.removed-grid img{width:100%;aspect-ratio:1;object-fit:cover;opacity:.4;border-radius:8px}
+.removed-grid .restore-btn{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;
+  background:hsl(var(--n) / 0.7);backdrop-filter:blur(8px);color:white;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:transform .15s, background .15s}
+.removed-grid .restore-btn:hover{transform:scale(1.1);background:hsl(var(--su) / 0.95)}
+.removed-grid .restore-btn [data-lucide]{width:13px;height:13px;stroke-width:2.5}
 </style>
 </head>
 <body>
 
 <div class="userbar">
-  <div>👤 <span class="who" id="whoami"></span> <span id="role-tag" style="color:#888;font-size:11px"></span></div>
+  <div><i data-lucide="user"></i> <span class="who" id="whoami"></span> <span id="role-tag"></span></div>
   <div>
-    <a href="/admin" class="admin-only" style="padding:6px 12px;background:#222;color:#888;border:1px solid #333;border-radius:6px;font-size:12px;text-decoration:none;margin-right:6px">⚙️ 管理</a>
-    <button onclick="logout()">登出</button>
+    <a href="/admin" class="admin-only icon-only" title="管理"><i data-lucide="settings"></i></a>
+    <button onclick="logout()"><i data-lucide="log-out"></i> 登出</button>
   </div>
 </div>
 
-<h1 id="mainTitle">👥 家庭相簿</h1>
+<h1 id="mainTitle">家庭相簿</h1>
 <div class="subtitle admin-only" id="subtitle"></div>
 
 <div class="kind-toggle" id="kindToggle">
-  <button class="active" data-kind="face" onclick="setKind('face')">👥 人臉</button>
-  <button data-kind="pet" onclick="setKind('pet')">🐾 寵物</button>
+  <button class="active" data-kind="face" onclick="setKind('face')"><i data-lucide="users"></i> 人臉</button>
+  <button data-kind="pet" onclick="setKind('pet')"><i data-lucide="paw-print"></i> 寵物</button>
 </div>
 
 <div class="toolbar admin-only">
@@ -234,17 +360,17 @@ body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin
   <button data-filter="unnamed" onclick="setFilter('unnamed')">未命名</button>
   <button data-filter="named" onclick="setFilter('named')">已命名</button>
   <button data-filter="skipped" onclick="setFilter('skipped')">已略過</button>
-  <button id="clusterSelectBtn" onclick="toggleClusterSelectMode()">✅ 多選</button>
-  <button id="viewToggle" onclick="toggleView()" style="display:none;margin-left:14px">📋 清單模式</button>
+  <button id="clusterSelectBtn" onclick="toggleClusterSelectMode()"><i data-lucide="square-mouse-pointer"></i> 多選</button>
+  <button id="viewToggle" onclick="toggleView()" style="display:none;margin-left:14px"><i data-lucide="list"></i> 清單模式</button>
 </div>
 
 <!-- 多選動作列（沿用 .select-bar 樣式，獨立 id） -->
 <div class="select-bar" id="clusterSelectBar">
-  <span class="count">已選 <span id="clusterSelectCount">0</span> 個 cluster</span>
+  <span class="count">已選 <span id="clusterSelectCount">0</span> 個</span>
   <button class="btn-cancel" onclick="selectAllVisibleClusters()">全選</button>
   <button class="btn-cancel" onclick="clearClusterSelection()">取消</button>
-  <button class="btn-go" onclick="openBatchMerge()">🔗 合併到…</button>
-  <button class="btn-cancel" onclick="batchSkip()" style="background:#3a3a1a;color:#ffeb3b">⏭️ 略過</button>
+  <button class="btn-go" onclick="openBatchMerge()"><i data-lucide="merge"></i> 合併到…</button>
+  <button class="btn-cancel" onclick="batchSkip()"><i data-lucide="skip-forward"></i> 略過</button>
   <button class="btn-cancel" onclick="exitClusterSelectMode()">退出</button>
 </div>
 
@@ -275,9 +401,8 @@ body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin
         <span class="meta" id="expandMeta"></span>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <button id="expandSelectBtn" class="admin-only" onclick="if(openExpandFid)toggleSelectMode(openExpandFid)"
-                style="padding:6px 12px;font-size:13px;border-radius:6px;border:1px solid #444;background:#222;color:#ccc;cursor:pointer">🔲 多選</button>
-        <button class="close" onclick="closeExpand()">✕</button>
+        <button id="expandSelectBtn" class="admin-only btn btn-edit" onclick="if(openExpandFid)toggleSelectMode(openExpandFid)"><i data-lucide="square-mouse-pointer"></i> 多選</button>
+        <button class="close" onclick="closeExpand()"><i data-lucide="x"></i></button>
       </div>
     </div>
     <div class="expand-body" id="expandBody"></div>
@@ -285,9 +410,8 @@ body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin
 </div>
 
 <div class="select-bar" id="selectBar">
-  <span class="count" id="selectCount">0</span>
-  <span style="color:#aaa">張已選</span>
-  <button class="btn-go" onclick="moveSelected()">→ 移到別群</button>
+  <span class="count"><span id="selectCount">0</span> 張已選</span>
+  <button class="btn-go" onclick="moveSelected()"><i data-lucide="arrow-right"></i> 移到別群</button>
   <button class="btn-cancel" onclick="exitSelectMode()">取消</button>
 </div>
 
@@ -297,11 +421,11 @@ body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin
     <div id="movePreview" style="text-align:center;margin-bottom:12px"></div>
     <input type="text" id="moveFilter" placeholder="輸入名稱或 ID 過濾..." oninput="filterMoveOptions()">
     <select id="moveTarget" size="10"></select>
-    <div style="display:flex;gap:6px;align-items:center;margin-top:10px;padding:10px;background:#222;border-radius:6px">
+    <div style="display:flex;gap:6px;align-items:center;margin-top:10px;padding:10px;background:hsl(var(--b2));border-radius:12px">
       <input type="text" id="newGroupName" placeholder="新群組名稱（可選）"
-             style="flex:1;padding:7px 10px;background:#1a1a1a;color:#fff;border:1px solid #333;border-radius:4px;font-size:13px"
+             style="flex:1;padding:8px 12px;background:hsl(var(--b1));color:hsl(var(--bc));border:none;border-radius:8px;font-size:13px"
              onkeydown="if(event.key==='Enter')moveToNew()">
-      <button class="btn btn-merge" onclick="moveToNew()" title="建立新群組並把選的照片放進去">✨ 移到新群組</button>
+      <button class="btn btn-merge" onclick="moveToNew()" title="建立新群組並把選的照片放進去"><i data-lucide="plus"></i> 移到新群組</button>
     </div>
     <div class="modal-actions" style="margin-top:12px">
       <button class="btn btn-skip" onclick="closeMove()">取消</button>
@@ -406,9 +530,9 @@ function loadStats(){
     document.getElementById('subtitle').textContent =
       `共 ${d.total} 個原始群組，合併後 ${d.displayed} 個可顯示`;
     document.getElementById('stats').innerHTML =
-      `<span style="color:#4fc3f7">${d.named}</span> 已命名 · ` +
-      `<span style="color:#888">${d.skipped}</span> 已略過 · ` +
-      `<span style="color:#ce93d8">${d.merges}</span> 已合併`;
+      `<span style="color:hsl(var(--p));font-weight:600">${d.named}</span> 已命名 · ` +
+      `<span style="color:hsl(var(--bc) / 0.5)">${d.skipped}</span> 已略過 · ` +
+      `<span style="color:hsl(var(--a));font-weight:600">${d.merges}</span> 已合併`;
   });
 }
 
@@ -430,17 +554,18 @@ function loadPage(page){
 
 function renderPager(){
   const html = `
-    <button onclick="loadPage(0)" ${currentPage===0?'disabled':''}>«</button>
-    <button onclick="loadPage(${currentPage-1})" ${currentPage===0?'disabled':''}>‹</button>
-    <span class="info">第
+    <button onclick="loadPage(0)" ${currentPage===0?'disabled':''} title="第一頁"><i data-lucide="chevrons-left"></i></button>
+    <button onclick="loadPage(${currentPage-1})" ${currentPage===0?'disabled':''} title="上一頁"><i data-lucide="chevron-left"></i></button>
+    <span class="info">
       <input type="number" min="1" max="${totalPages}" value="${currentPage+1}"
              onchange="loadPage(this.value-1)"> / ${totalPages} 頁
       · 共 ${totalCount} 筆</span>
-    <button onclick="loadPage(${currentPage+1})" ${currentPage>=totalPages-1?'disabled':''}>›</button>
-    <button onclick="loadPage(${totalPages-1})" ${currentPage>=totalPages-1?'disabled':''}>»</button>
+    <button onclick="loadPage(${currentPage+1})" ${currentPage>=totalPages-1?'disabled':''} title="下一頁"><i data-lucide="chevron-right"></i></button>
+    <button onclick="loadPage(${totalPages-1})" ${currentPage>=totalPages-1?'disabled':''} title="最後一頁"><i data-lucide="chevrons-right"></i></button>
   `;
   document.getElementById('pagerTop').innerHTML = html;
   document.getElementById('pagerBottom').innerHTML = html;
+  window.refreshIcons && window.refreshIcons();
 }
 
 function renderGrid(){
@@ -452,6 +577,7 @@ function renderGrid(){
     grid.className = 'grid';
     grid.innerHTML = ITEMS.map(c => renderCard(c)).join('');
   }
+  window.refreshIcons && window.refreshIcons();
 }
 
 function renderListRow(c){
@@ -459,9 +585,9 @@ function renderListRow(c){
   const nameClick = window.IS_ADMIN ? `onclick="editNameInline('${fid}')"` : '';
   const actions = window.IS_ADMIN ? `
     <div class="lr-actions">
-      <button onclick="editNameInline('${fid}')">✏️ 改名</button>
-      <button onclick="openMerge('${fid}')">🔗 合併</button>
-      <button onclick="undoAction('${fid}')">↩ 取消命名</button>
+      <button onclick="editNameInline('${fid}')" title="改名"><i data-lucide="pencil"></i></button>
+      <button onclick="openMerge('${fid}')" title="合併"><i data-lucide="merge"></i></button>
+      <button onclick="undoAction('${fid}')" title="取消命名"><i data-lucide="undo-2"></i></button>
     </div>` : '<div></div>';
   return `
     <div class="list-row" id="row_${fid}">
@@ -512,8 +638,10 @@ function cancelInlineName(fid){
 
 function toggleView(){
   viewMode = viewMode === 'grid' ? 'list' : 'grid';
-  document.getElementById('viewToggle').textContent =
-    viewMode === 'list' ? '🖼 圖片模式' : '📋 清單模式';
+  document.getElementById('viewToggle').innerHTML =
+    viewMode === 'list'
+      ? '<i data-lucide="layout-grid"></i> 圖片模式'
+      : '<i data-lucide="list"></i> 清單模式';
   renderGrid();
 }
 
@@ -611,31 +739,31 @@ function renderCard(c){
   // 多選模式下隱藏每張卡的 action（避免誤點）
   if(window.IS_ADMIN && !clusterSelectMode){
     if(isSkipped){
-      actions = `<span style="color:#666">已略過</span>
-        <button class="btn btn-edit" onclick="toggleSkip('${fid}')">↩ 恢復</button>`;
+      actions = `<span style="color:hsl(var(--bc) / 0.45);font-size:13px">已略過</span>
+        <button class="btn btn-edit" onclick="toggleSkip('${fid}')"><i data-lucide="undo-2"></i> 恢復</button>`;
     } else if(isNamed){
       actions = `
-        <button class="btn btn-edit" onclick="editName('${fid}')">✏️ 改名</button>
-        <button class="btn btn-undo" onclick="undoAction('${fid}')">↩ 取消命名</button>
-        <button class="btn btn-merge" onclick="openMerge('${fid}')">🔗 合併</button>
+        <button class="btn btn-edit" onclick="editName('${fid}')"><i data-lucide="pencil"></i> 改名</button>
+        <button class="btn btn-undo" onclick="undoAction('${fid}')"><i data-lucide="undo-2"></i> 取消命名</button>
+        <button class="btn btn-merge" onclick="openMerge('${fid}')"><i data-lucide="merge"></i> 合併</button>
       `;
     } else {
       actions = `
         <input type="text" id="inp_${fid}" placeholder="輸入名稱..." onkeydown="if(event.key==='Enter')saveName('${fid}')">
-        <button class="btn btn-save" onclick="saveName('${fid}')">💾</button>
-        <button class="btn btn-skip" onclick="toggleSkip('${fid}')">⏭️ 略過</button>
-        <button class="btn btn-merge" onclick="openMerge('${fid}')">🔗 合併</button>
+        <button class="btn btn-save" onclick="saveName('${fid}')" title="儲存"><i data-lucide="check"></i></button>
+        <button class="btn btn-skip" onclick="toggleSkip('${fid}')"><i data-lucide="skip-forward"></i> 略過</button>
+        <button class="btn btn-merge" onclick="openMerge('${fid}')"><i data-lucide="merge"></i> 合併</button>
       `;
     }
   }
 
   const badges = [];
   if((c.merged_from||[]).length > 0)
-    badges.push(`<div class="merged-badge">已合併 ${c.merged_from.length} 群</div>`);
+    badges.push(`<div class="merged-badge"><i data-lucide="merge"></i> 已合併 ${c.merged_from.length} 群</div>`);
   if(c.moved_in_count > 0)
-    badges.push(`<div class="merged-badge" style="background:#2a4a3a;color:#a5d6a7">← 移入 ${c.moved_in_count} 張</div>`);
+    badges.push(`<div class="merged-badge" style="background:hsl(var(--su) / 0.15);color:hsl(var(--su))"><i data-lucide="log-in"></i> 移入 ${c.moved_in_count} 張</div>`);
   if(c.moved_away_count > 0)
-    badges.push(`<div class="merged-badge" style="background:#4a3a2a;color:#ffcc80">→ 移出 ${c.moved_away_count} 張</div>`);
+    badges.push(`<div class="merged-badge" style="background:hsl(var(--wa) / 0.15);color:hsl(var(--wa))"><i data-lucide="log-out"></i> 移出 ${c.moved_away_count} 張</div>`);
   const mergedBadge = badges.join('');
 
   return `
@@ -644,7 +772,7 @@ function renderCard(c){
       <div class="card-top">
         <div class="face-meta">
           <h3>${c.name || fid}</h3>
-          ${c.name ? `<div style="color:#666;font-size:11px;font-family:monospace;margin-top:2px">${fid}</div>` : ''}
+          ${c.name ? `<div style="color:hsl(var(--bc) / 0.4);font-size:11px;font-family:'SF Mono',ui-monospace,monospace;margin-top:2px">${fid}</div>` : ''}
           <div class="count">${c.count} 張${c.count!==c.original_count?' (原 '+c.original_count+')':''}</div>
           ${mergedBadge}
         </div>
@@ -652,8 +780,8 @@ function renderCard(c){
       </div>
       <div class="photo-grid">${previewImgs}</div>
       <div class="expand-bar" onclick="event.stopPropagation();openExpand('${fid}')">
-        <span>📂 展開查看全部 ${c.count} 張</span>
-        <span>↗</span>
+        <span>展開查看全部 ${c.count} 張</span>
+        <i data-lucide="arrow-up-right"></i>
       </div>
       <div class="actions">${actions}</div>
     </div>
@@ -676,7 +804,7 @@ function openExpand(fid){
     selectedPaths.clear();
     renderSelectBar();
   }
-  document.getElementById('expandBody').innerHTML = '<div style="padding:30px;color:#888;text-align:center">載入中…</div>';
+  document.getElementById('expandBody').innerHTML = '<div class="spinner">載入中…</div>';
   document.getElementById('expandModal').classList.add('active');
   // 用 item 自己的 kind（混合模式下必要），fallback 到 window.KIND
   const it = ITEMS.find(x => x.id === fid);
@@ -753,15 +881,16 @@ function renderExpandBody(){
   // header 多選按鈕的狀態同步
   const headerBtn = document.getElementById('expandSelectBtn');
   if(headerBtn){
-    headerBtn.textContent = inSelect ? '✓ 多選中' : '🔲 多選';
-    headerBtn.style.background = inSelect ? '#4fc3f7' : '#222';
-    headerBtn.style.color = inSelect ? '#000' : '#ccc';
-    headerBtn.style.borderColor = inSelect ? '#4fc3f7' : '#444';
+    headerBtn.innerHTML = inSelect
+      ? '<i data-lucide="check"></i> 多選中'
+      : '<i data-lucide="square-mouse-pointer"></i> 多選';
+    headerBtn.classList.toggle('btn-save', inSelect);
+    headerBtn.classList.toggle('btn-edit', !inSelect);
   }
   const tools = `
     ${inSelect ? '<div class="expand-tools"><span class="hint">點縮圖切換選取；底部 bar 操作</span></div>' : ''}
     <div class="year-filter">
-      <span style="color:#888">篩選：</span>
+      <span style="color:hsl(var(--bc) / 0.55);font-size:13px">篩選</span>
       <select onchange="yearFilter=this.value; renderExpandBody();">
         <option value="">全部年份</option>
         ${yearOptions}
@@ -772,7 +901,7 @@ function renderExpandBody(){
         ${monthOptions}
       </select>
       ${(yearFilter||monthFilter) ? '<button class="clear" onclick="yearFilter=\'\';monthFilter=\'\';renderExpandBody();">清除</button>' : ''}
-      <span style="color:#888;margin-left:auto">顯示 ${filtered.length} / ${allItems.length}</span>
+      <span style="color:hsl(var(--bc) / 0.55);font-size:13px;margin-left:auto">顯示 ${filtered.length} / ${allItems.length}</span>
     </div>`;
 
   // 按年分組（同年內已按 ts desc），key 統一為 string
@@ -802,14 +931,14 @@ function renderExpandBody(){
     if(!inSelect){
       if(window.IS_ADMIN){
         actions = `<div class="thumb-actions">
-          <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為群組特寫照">⭐</button>
-          <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群">→</button>
-          <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除">✕</button>
+          <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為群組特寫照"><i data-lucide="star"></i></button>
+          <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群"><i data-lucide="arrow-right"></i></button>
+          <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除"><i data-lucide="x"></i></button>
         </div>`;
       } else if(isOwnIdentity){
         // viewer 在自己的 cluster：只能挑頭像，不能移動 / 移除
         actions = `<div class="thumb-actions">
-          <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為我的頭像">⭐</button>
+          <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為我的頭像"><i data-lucide="star"></i></button>
         </div>`;
       }
     }
@@ -828,11 +957,14 @@ function renderExpandBody(){
     if(!collapsed && !materialized){ materializedYears.add(y); materialized = true; }
     const bodyHtml = materialized
       ? `<div class="expand-photos">${items.map(renderThumb).join('')}</div>`
-      : `<div style="color:#666;font-size:12px;padding:6px 4px">點選展開以載入</div>`;
+      : `<div style="color:hsl(var(--bc) / 0.45);font-size:12px;padding:8px 4px">點選展開以載入</div>`;
     return `<div class="year-section ${collapsed?'collapsed':''}" data-year="${y}">
       <div class="year-header" onclick="toggleYear('${y}')">
-        <span>${y} <span style="color:#888;font-weight:400;font-size:12px">(${items.length} 張)</span></span>
-        <span class="toggle">▼</span>
+        <span>${y} <span style="color:hsl(var(--bc) / 0.45);font-weight:400;font-size:12px">(${items.length} 張)</span></span>
+        <span class="toggle">
+          <i data-lucide="chevron-down" class="icon-expanded"></i>
+          <i data-lucide="chevron-right" class="icon-collapsed"></i>
+        </span>
       </div>
       <div class="year-body">${bodyHtml}</div>
     </div>`;
@@ -848,16 +980,19 @@ function renderExpandBody(){
     const removedImgs = removed.map(x =>
       `<div class="thumb-wrap">
         <img src="/img_thumb/${x.path}?w=200" loading="lazy" decoding="async">
-        <button class="restore-btn" onclick="restoreImg('${fid}','${x.path.replace(/'/g,"\'")}')" title="恢復">↩</button>
+        <button class="restore-btn" onclick="restoreImg('${fid}','${x.path.replace(/'/g,"\'")}')" title="恢復"><i data-lucide="undo-2"></i></button>
       </div>`
     ).join('');
     const body = mat
       ? `<div class="removed-grid">${removedImgs}</div>`
-      : `<div style="color:#666;font-size:12px;padding:6px 4px">點選展開以載入</div>`;
-    removedSection = `<div class="year-section ${collapsed?'collapsed':''}" data-removed="1" style="margin-top:14px">
-      <div class="year-header" style="background:#3a2424;color:#ef9a9a" onclick="toggleRemovedSection()">
-        <span>已移除 <span style="color:#888;font-weight:400;font-size:12px">(${removed.length} 張)</span></span>
-        <span class="toggle">▼</span>
+      : `<div style="color:hsl(var(--bc) / 0.45);font-size:12px;padding:8px 4px">點選展開以載入</div>`;
+    removedSection = `<div class="year-section ${collapsed?'collapsed':''}" data-removed="1" style="margin-top:18px">
+      <div class="year-header" style="background:hsl(var(--er) / 0.10);color:hsl(var(--er))" onclick="toggleRemovedSection()">
+        <span>已移除 <span style="color:hsl(var(--bc) / 0.45);font-weight:400;font-size:12px">(${removed.length} 張)</span></span>
+        <span class="toggle">
+          <i data-lucide="chevron-down" class="icon-expanded"></i>
+          <i data-lucide="chevron-right" class="icon-collapsed"></i>
+        </span>
       </div>
       <div class="year-body">${body}</div>
     </div>`;
@@ -865,10 +1000,11 @@ function renderExpandBody(){
 
   // 自己的 cluster：顯示挑頭像的提示橫幅
   const selfHint = (isOwnIdentity && !window.IS_ADMIN)
-    ? `<div class="self-hint">💡 點任一張照片右上的 ⭐ 可設為你的頭像（其他人看你也會用這張）</div>`
+    ? `<div class="self-hint"><i data-lucide="info"></i> 點任一張照片右上的星星可設為你的頭像（其他人看你也會用這張）</div>`
     : '';
 
   document.getElementById('expandBody').innerHTML = `${selfHint}${tools}${sections}${removedSection}`;
+  window.refreshIcons && window.refreshIcons();
 }
 
 function toggleRemovedSection(){
@@ -967,8 +1103,8 @@ function moveSelected(){
   document.getElementById('moveFilter').value = '';
   const ngn = document.getElementById('newGroupName'); if(ngn) ngn.value = '';
   document.getElementById('movePreview').innerHTML =
-    `<div style="color:#4fc3f7;font-size:15px">批次移動 ${selectedPaths.size} 張</div>
-     <div style="color:#888;font-size:12px;margin-top:4px">來自 ${moveSource}</div>`;
+    `<div style="color:hsl(var(--bc));font-size:15px;font-weight:600">批次移動 ${selectedPaths.size} 張</div>
+     <div style="color:hsl(var(--bc) / 0.55);font-size:12px;margin-top:4px">來自 ${moveSource}</div>`;
   fetch(kq('/api/clusters')).then(r=>r.json()).then(list=>{
     allClusters = list.filter(c=>c.id !== moveSource);
     renderMoveOptions(allClusters);
@@ -1072,8 +1208,8 @@ function openMove(fid, imgPath){
   document.getElementById('moveFilter').value = '';
   const ngn = document.getElementById('newGroupName'); if(ngn) ngn.value = '';
   document.getElementById('movePreview').innerHTML =
-    `<img src="/img_thumb/${imgPath}?w=300" style="max-height:140px;border-radius:6px;border:2px solid #333">
-     <div style="color:#888;font-size:12px;margin-top:6px">來自 ${fid}</div>`;
+    `<img src="/img_thumb/${imgPath}?w=300" style="max-height:140px;border-radius:12px;box-shadow:0 4px 12px hsl(var(--n) / 0.10)">
+     <div style="color:hsl(var(--bc) / 0.55);font-size:12px;margin-top:8px">來自 ${fid}</div>`;
   fetch(kq('/api/clusters')).then(r=>r.json()).then(list=>{
     allClusters = list.filter(c=>c.id !== fid);
     renderMoveOptions(allClusters);
@@ -1191,7 +1327,8 @@ function setFilter(f){
     tgl.style.display = 'none';
     if(viewMode === 'list'){
       viewMode = 'grid';
-      tgl.textContent = '📋 清單模式';
+      tgl.innerHTML = '<i data-lucide="list"></i> 清單模式';
+      window.refreshIcons && window.refreshIcons();
     }
   }
   loadPage(0);
