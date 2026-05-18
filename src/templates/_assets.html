@@ -1,0 +1,37 @@
+<!-- v0.5 frontend assets: Tailwind Play CDN + DaisyUI v4 + Morandi theme -->
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css">
+<style>
+[data-theme="morandi"] {
+  color-scheme: light;
+  /* Base palette — HSL components, no commas (DaisyUI v4 format) */
+  --p:  101 11% 67%;   /* primary   — sage green        #a8b5a2 */
+  --pc:  33 6% 22%;    /* primary content (text-on-primary) */
+  --s:   10 28% 71%;   /* secondary — dusty rose        #c9a7a0 */
+  --sc:  33 6% 22%;
+  --a:  271 24% 72%;   /* accent    — muted lavender    #b8a6c9 */
+  --ac:  33 6% 22%;
+  --n:   33 6% 34%;    /* neutral   — warm dark grey    #5c5751 */
+  --nc:  40 31% 94%;
+  --b1:  40 31% 94%;   /* base-100  — warm off-white    #f5f2ec */
+  --b2:  40 27% 89%;   /* base-200  — card bg           #ebe6dc */
+  --b3:  39 21% 81%;   /* base-300  — borders/dividers  #d9d2c5 */
+  --bc:  33 6% 22%;    /* base content (text on bg) */
+  --in: 207 23% 68%;   /* info      — dusty blue        #9bb0c1 */
+  --inc: 33 6% 22%;
+  --su:  98 17% 66%;   /* success   — sage              #a5b89a */
+  --suc: 33 6% 22%;
+  --wa:  36 49% 67%;   /* warning   — muted ochre       #d4b483 */
+  --wac: 33 6% 22%;
+  --er:   1 32% 64%;   /* error     — muted terracotta  #c08584 */
+  --erc: 40 31% 94%;
+  --rounded-box: 1rem;
+  --rounded-btn: 0.6rem;
+  --animation-btn: 0.25s;
+}
+
+/* Global base — apply to body so legacy inline styles get layered on top */
+body {
+  font-family: "Noto Sans TC", "PingFang TC", -apple-system, BlinkMacSystemFont, sans-serif;
+}
+</style>

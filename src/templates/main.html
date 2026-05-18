@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html data-theme="morandi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人臉命名工具</title>
+<!--USER_INJECT-->
+<!--V05_ASSETS-->
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#111;color:#e0e0e0;padding:20px}
+h1{text-align:center;margin-bottom:6px}
+.subtitle{text-align:center;color:#888;margin-bottom:14px;font-size:14px}
+.userbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;color:#888;font-size:13px;flex-wrap:wrap;gap:8px}
+.userbar .who{color:#4fc3f7}
+.userbar button{padding:6px 12px;background:#222;color:#888;border:1px solid #333;border-radius:6px;font-size:12px;cursor:pointer}
+.userbar button:hover{background:#2a2a2a;color:#ccc}
+.toolbar{display:flex;justify-content:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.toolbar button{padding:7px 14px;background:#222;color:#888;border:1px solid #333;border-radius:6px;cursor:pointer;font-size:13px;min-height:36px}
+.toolbar button:hover{background:#2a2a2a}
+.toolbar button.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
+.kind-toggle{display:flex;justify-content:center;gap:0;margin-bottom:14px}
+.kind-toggle button{padding:8px 18px;background:#1a1a1a;color:#888;border:1px solid #333;cursor:pointer;font-size:14px;min-height:40px}
+.kind-toggle button:first-child{border-radius:8px 0 0 8px}
+.kind-toggle button:last-child{border-radius:0 8px 8px 0;border-left:none}
+.kind-toggle button:hover{background:#2a2a2a;color:#ccc}
+.kind-toggle button.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
+/* 若某 kind 沒資料，整個 toggle 隱藏（避免讓 viewer 看到空 tab） */
+.kind-toggle.hidden{display:none}
+.admin-only{display:none}
+body.admin .admin-only{display:initial}
+body.admin .admin-only.flex{display:flex}
+body.admin .admin-only.actions{display:flex}
+@media (max-width:600px){
+  body{padding:10px}
+  .grid{grid-template-columns:1fr !important}
+  .pager{flex-wrap:wrap}
+  .expand-modal .expand-box{max-height:calc(100vh - 20px) !important;width:100vw !important}
+  .expand-header{padding:10px 14px}
+  .expand-header h3{font-size:15px}
+  .modal-box{padding:18px}
+  .face-thumb{width:80px !important;height:80px !important}
+  .card-top{grid-template-columns:1fr 80px !important}
+}
+.stats{text-align:center;margin-bottom:16px;color:#888;font-size:13px}
+.pager{display:flex;justify-content:center;align-items:center;gap:10px;margin:18px 0}
+.pager button{padding:8px 16px;background:#222;color:#ccc;border:1px solid #333;border-radius:6px;cursor:pointer}
+.pager button:hover:not(:disabled){background:#2a2a2a}
+.pager button:disabled{opacity:.3;cursor:not-allowed}
+.pager input{width:56px;padding:6px;text-align:center;background:#222;color:#fff;border:1px solid #333;border-radius:6px}
+.pager .info{color:#888;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px}
+/* viewer-only tile mode: 大頭像 + 名字，整塊可點 */
+body:not(.admin) .grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
+body:not(.admin) .tile{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:14px;padding:14px 10px;cursor:pointer;text-align:center;transition:transform .15s,border-color .15s;user-select:none;-webkit-tap-highlight-color:transparent}
+body:not(.admin) .tile:hover{transform:translateY(-2px);border-color:#4fc3f7}
+body:not(.admin) .tile:active{transform:scale(.97)}
+body:not(.admin) .tile .avatar{width:100%;aspect-ratio:1;border-radius:50%;object-fit:cover;background:#000;display:block;margin:0 auto 10px;border:2px solid #2a2a2a}
+body:not(.admin) .tile:hover .avatar{border-color:#4fc3f7}
+body:not(.admin) .tile .tname{font-size:15px;color:#e0e0e0;font-weight:500;line-height:1.3;word-break:break-word}
+body:not(.admin) .tile .tcount{color:#666;font-size:12px;margin-top:3px}
+@media (max-width:480px){
+  body:not(.admin) .grid{grid-template-columns:repeat(2,1fr);gap:10px}
+  body:not(.admin) .tile{padding:10px 8px}
+  body:not(.admin) .tile .tname{font-size:14px}
+}
+@media (min-width:481px) and (max-width:768px){
+  body:not(.admin) .grid{grid-template-columns:repeat(3,1fr)}
+}
+/* viewer 也要能蓋掉桌面 1fr 強制：因為 600px @media 把 grid 強制成 1fr */
+@media (max-width:600px){
+  body:not(.admin) .grid{grid-template-columns:repeat(2,1fr) !important}
+}
+.list{display:flex;flex-direction:column;gap:6px}
+.list-row{display:grid;grid-template-columns:48px 90px 1fr 80px auto;align-items:center;gap:14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:8px 14px}
+.list-row:hover{border-color:#444}
+.list-row .lr-thumb{width:40px;height:40px;border-radius:50%;object-fit:cover;border:2px solid #4fc3f7}
+.list-row .lr-id{color:#888;font-size:12px;font-family:monospace}
+.list-row .lr-name{color:#4fc3f7;font-weight:600;font-size:15px;cursor:text;padding:4px 8px;border-radius:4px;min-height:28px}
+.list-row .lr-name:hover{background:#222}
+.list-row .lr-name-input{width:100%;padding:5px 8px;background:#222;color:#fff;border:1px solid #4fc3f7;border-radius:4px;font-size:14px}
+.list-row .lr-count{color:#888;font-size:13px;text-align:right}
+.list-row .lr-actions{display:flex;gap:6px}
+.list-row .lr-actions button{padding:5px 10px;font-size:12px;border-radius:4px;border:1px solid #444;background:#222;color:#ccc;cursor:pointer}
+.list-row .lr-actions button:hover{background:#2a2a2a}
+.card{position:relative;background:#1a1a1a;border-radius:10px;border:2px solid #2a2a2a;overflow:hidden;transition:border-color .2s}
+.card.cluster-selected{border-color:#ffeb3b;box-shadow:0 0 0 2px rgba(255,235,59,.25) inset}
+.cluster-cb{position:absolute;top:8px;right:8px;width:24px;height:24px;accent-color:#4fc3f7;cursor:pointer;z-index:5;background:rgba(0,0,0,.55);border-radius:4px;padding:1px}
+#clusterSelectBtn.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
+.card:hover{border-color:#444}
+.card.named{border-color:#4fc3f7}
+.card.skipped{opacity:.55;border-color:#444;background:#161616}
+.card.skipped .face-meta h3{color:#777}
+.card-top{display:grid;grid-template-columns:1fr 100px;gap:12px;padding:14px}
+.face-meta h3{color:#4fc3f7;font-size:17px;margin-bottom:4px}
+.face-meta .count{color:#888;font-size:13px}
+.face-meta .named-label{color:#4fc3f7;font-weight:600;font-size:15px;margin-top:6px}
+.face-meta .merged-badge{display:inline-block;margin-top:6px;padding:2px 6px;background:#3a2a4a;color:#ce93d8;font-size:11px;border-radius:4px}
+.face-thumb{width:100px;height:100px;border-radius:50%;object-fit:cover;border:3px solid #4fc3f7}
+.card.skipped .face-thumb{border-color:#555}
+.photo-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;padding:0 3px}
+.photo-grid img{width:100%;aspect-ratio:1;object-fit:cover;cursor:pointer;transition:opacity .15s}
+.photo-grid img:hover{opacity:.8}
+.expand-bar{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#1f1f1f;border-top:1px solid #2a2a2a;cursor:pointer;font-size:13px;color:#888}
+.expand-bar:hover{background:#252525;color:#ccc}
+.expand-photos{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
+.expand-photos .thumb-wrap{position:relative}
+.expand-photos img{width:100%;aspect-ratio:1;object-fit:cover;cursor:pointer}
+.expand-photos .thumb-wrap{position:relative}
+.expand-photos .thumb-actions{position:absolute;top:2px;right:2px;display:flex;gap:3px;opacity:0;transition:opacity .15s}
+.expand-photos .thumb-wrap:hover .thumb-actions{opacity:1}
+.expand-photos .thumb-wrap.selectable img{cursor:pointer}
+.expand-photos .thumb-wrap.selected{outline:3px solid #4fc3f7;outline-offset:-3px}
+.expand-photos .thumb-wrap.selected::after{content:'✓';position:absolute;top:4px;left:4px;width:22px;height:22px;background:#4fc3f7;color:#000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700}
+.expand-tools{display:flex;gap:8px;padding:4px 0 10px;align-items:center}
+.expand-tools button{padding:5px 12px;font-size:12px;border-radius:5px;border:1px solid #444;background:#222;color:#ccc;cursor:pointer}
+.expand-tools button.active{background:#4fc3f7;color:#000;border-color:#4fc3f7}
+.expand-tools .hint{color:#666;font-size:11px;margin-left:4px}
+.select-bar{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:2px solid #4fc3f7;border-radius:30px;padding:10px 22px;box-shadow:0 4px 24px rgba(0,0,0,.6);gap:12px;align-items:center;z-index:200}
+.select-bar.active{display:flex}
+.select-bar .count{color:#4fc3f7;font-weight:600}
+.select-bar button{padding:7px 14px;border-radius:18px;border:none;cursor:pointer;font-size:13px;font-weight:600}
+.select-bar .btn-go{background:#4fc3f7;color:#000}
+.select-bar .btn-cancel{background:#333;color:#ccc}
+.expand-photos .thumb-actions button{width:22px;height:22px;border-radius:50%;border:none;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;color:#fff;padding:0}
+.expand-photos .move-btn{background:rgba(76,175,80,.85)}
+.expand-photos .remove-btn{background:rgba(239,83,80,.85)}
+.expand-photos .thumb-btn{background:rgba(255,193,7,.85)}
+.actions{display:flex;gap:6px;padding:10px 14px;border-top:1px solid #2a2a2a;flex-wrap:wrap}
+.actions input{flex:1;min-width:120px;padding:7px 10px;border:1px solid #333;border-radius:5px;background:#222;color:#fff;font-size:13px}
+.actions input:focus{border-color:#4fc3f7;outline:none}
+.btn{padding:7px 12px;border-radius:5px;cursor:pointer;font-size:13px;border:none}
+.btn-save{background:#4fc3f7;color:#000;font-weight:600}
+.btn-edit{background:#333;color:#4fc3f7;border:1px solid #444}
+.btn-skip{background:#333;color:#888;border:1px solid #444}
+.btn-merge{background:#333;color:#ab47bc;border:1px solid #444}
+.btn-undo{background:#333;color:#ef5350;border:1px solid #444}
+.modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.85);z-index:100;justify-content:center;align-items:center}
+.modal.active{display:flex}
+.modal-box{background:#1a1a1a;padding:24px;border-radius:12px;max-width:480px;width:90%;border:1px solid #333}
+.expand-modal{align-items:flex-start;padding:24px 0}
+.expand-modal .expand-box{background:#161616;border:1px solid #333;border-radius:12px;width:min(1400px,95vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column}
+.expand-header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #2a2a2a;flex-shrink:0}
+.expand-header h3{color:#4fc3f7;font-size:18px}
+.expand-header .meta{color:#888;font-size:13px;margin-left:10px}
+.expand-header .close{background:#333;color:#ccc;border:none;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:16px}
+.expand-header .close:hover{background:#444}
+.expand-body{padding:14px 20px;overflow-y:auto;flex:1}
+.self-hint{background:#1c2d3e;border:1px solid #2c4a6a;color:#9cf;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;line-height:1.5}
+.expand-modal .expand-photos{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.expand-modal .expand-photos .thumb-wrap img{border-radius:6px}
+.expand-modal .removed-grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px}
+.year-filter{display:flex;gap:8px;align-items:center;padding:8px 0 12px;flex-wrap:wrap}
+.year-filter select{padding:6px 10px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;font-size:13px}
+.year-filter .clear{padding:4px 10px;background:#333;color:#888;border:none;border-radius:4px;cursor:pointer;font-size:12px}
+.year-section{margin-bottom:14px}
+.year-header{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#1f2a30;color:#4fc3f7;font-weight:600;border-radius:6px;cursor:pointer;margin-bottom:6px;font-size:14px;
+  position:sticky;top:0;z-index:5;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.year-header:hover{background:#253339}
+.year-header .toggle{transition:transform .15s}
+.year-section.collapsed .year-header .toggle{transform:rotate(-90deg)}
+.year-section.collapsed .year-body{display:none}
+.modal-box h3{margin-bottom:16px}
+.modal-box input[type=text]{width:100%;padding:8px 10px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;margin-bottom:8px}
+.modal-box select{width:100%;padding:10px;margin-bottom:16px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;max-height:300px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end}
+.spinner{text-align:center;padding:40px;color:#666}
+.removed-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;padding:10px 14px}
+.removed-grid .thumb-wrap{position:relative}
+.removed-grid img{width:100%;aspect-ratio:1;object-fit:cover;opacity:.4}
+.removed-grid .restore-btn{position:absolute;top:2px;right:2px;width:22px;height:22px;border-radius:50%;background:rgba(76,175,80,.85);color:#fff;border:none;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center}
+</style>
+</head>
+<body>
+
+<div class="userbar">
+  <div>👤 <span class="who" id="whoami"></span> <span id="role-tag" style="color:#888;font-size:11px"></span></div>
+  <div>
+    <a href="/admin" class="admin-only" style="padding:6px 12px;background:#222;color:#888;border:1px solid #333;border-radius:6px;font-size:12px;text-decoration:none;margin-right:6px">⚙️ 管理</a>
+    <button onclick="logout()">登出</button>
+  </div>
+</div>
+
+<h1 id="mainTitle">👥 家庭相簿</h1>
+<div class="subtitle admin-only" id="subtitle"></div>
+
+<div class="kind-toggle" id="kindToggle">
+  <button class="active" data-kind="face" onclick="setKind('face')">👥 人臉</button>
+  <button data-kind="pet" onclick="setKind('pet')">🐾 寵物</button>
+</div>
+
+<div class="toolbar admin-only">
+  <button class="active" data-filter="all" onclick="setFilter('all')">全部</button>
+  <button data-filter="unnamed" onclick="setFilter('unnamed')">未命名</button>
+  <button data-filter="named" onclick="setFilter('named')">已命名</button>
+  <button data-filter="skipped" onclick="setFilter('skipped')">已略過</button>
+  <button id="clusterSelectBtn" onclick="toggleClusterSelectMode()">✅ 多選</button>
+  <button id="viewToggle" onclick="toggleView()" style="display:none;margin-left:14px">📋 清單模式</button>
+</div>
+
+<!-- 多選動作列（沿用 .select-bar 樣式，獨立 id） -->
+<div class="select-bar" id="clusterSelectBar">
+  <span class="count">已選 <span id="clusterSelectCount">0</span> 個 cluster</span>
+  <button class="btn-cancel" onclick="selectAllVisibleClusters()">全選</button>
+  <button class="btn-cancel" onclick="clearClusterSelection()">取消</button>
+  <button class="btn-go" onclick="openBatchMerge()">🔗 合併到…</button>
+  <button class="btn-cancel" onclick="batchSkip()" style="background:#3a3a1a;color:#ffeb3b">⏭️ 略過</button>
+  <button class="btn-cancel" onclick="exitClusterSelectMode()">退出</button>
+</div>
+
+<div class="stats admin-only" id="stats"></div>
+
+<div class="pager" id="pagerTop"></div>
+<div class="grid" id="grid"></div>
+<div class="spinner" id="spinner" style="display:none">載入中...</div>
+<div class="pager" id="pagerBottom"></div>
+
+<div class="modal" id="mergeModal">
+  <div class="modal-box">
+    <h3>合併到哪個群組？</h3>
+    <input type="text" id="mergeFilter" placeholder="輸入名稱或 ID 過濾..." oninput="filterMergeOptions()">
+    <select id="mergeTarget" size="10"></select>
+    <div class="modal-actions">
+      <button class="btn btn-skip" onclick="closeMerge()">取消</button>
+      <button class="btn btn-save" onclick="confirmMerge()">合併</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal expand-modal" id="expandModal" onclick="if(event.target===this)closeExpand()">
+  <div class="expand-box">
+    <div class="expand-header">
+      <div>
+        <h3 id="expandTitle"></h3>
+        <span class="meta" id="expandMeta"></span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="expandSelectBtn" class="admin-only" onclick="if(openExpandFid)toggleSelectMode(openExpandFid)"
+                style="padding:6px 12px;font-size:13px;border-radius:6px;border:1px solid #444;background:#222;color:#ccc;cursor:pointer">🔲 多選</button>
+        <button class="close" onclick="closeExpand()">✕</button>
+      </div>
+    </div>
+    <div class="expand-body" id="expandBody"></div>
+  </div>
+</div>
+
+<div class="select-bar" id="selectBar">
+  <span class="count" id="selectCount">0</span>
+  <span style="color:#aaa">張已選</span>
+  <button class="btn-go" onclick="moveSelected()">→ 移到別群</button>
+  <button class="btn-cancel" onclick="exitSelectMode()">取消</button>
+</div>
+
+<div class="modal" id="moveModal">
+  <div class="modal-box">
+    <h3>把這張照片移到哪個群組？</h3>
+    <div id="movePreview" style="text-align:center;margin-bottom:12px"></div>
+    <input type="text" id="moveFilter" placeholder="輸入名稱或 ID 過濾..." oninput="filterMoveOptions()">
+    <select id="moveTarget" size="10"></select>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:10px;padding:10px;background:#222;border-radius:6px">
+      <input type="text" id="newGroupName" placeholder="新群組名稱（可選）"
+             style="flex:1;padding:7px 10px;background:#1a1a1a;color:#fff;border:1px solid #333;border-radius:4px;font-size:13px"
+             onkeydown="if(event.key==='Enter')moveToNew()">
+      <button class="btn btn-merge" onclick="moveToNew()" title="建立新群組並把選的照片放進去">✨ 移到新群組</button>
+    </div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn btn-skip" onclick="closeMove()">取消</button>
+      <button class="btn btn-save" onclick="confirmMove()">移到既有群組</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let ITEMS = [];
+let currentPage = 0;
+let totalPages = 1;
+let totalCount = 0;
+let filter = 'all';
+let viewMode = 'grid';  // 'grid' | 'list'，list 只有 named filter 下可用
+let mergeSource = '';
+let mergeSources = [];          // 多選合併用：>0 表示 batch 模式
+let clusterSelectMode = false;
+let selectedClusterIds = new Set();
+let moveSource = '';   // 來源 cluster id
+let movePath = '';     // 單張移動的圖片路徑（null 代表 batch）
+let allClusters = [];  // 給合併/移動下拉用，按需 fetch
+let openExpandFid = null;       // 目前 modal 展開的 cluster id（單一）
+let openExpandMeta = null;      // {images:[{path,ts,year,month}], removed:[]}
+let selectMode = null;          // 多選模式作用中的 cluster id
+let selectedPaths = new Set();  // 已選中的照片路徑
+let yearFilter = '';            // '' = 全部
+let monthFilter = '';           // '' = 全部
+let collapsedYears = new Set(); // 已摺疊（key = String(year) 或 '無日期'）
+let materializedYears = new Set(); // 已 render 出 img DOM 的年份
+let removedSectionCollapsed = true;   // 「已移除」區段預設折疊
+let removedSectionMaterialized = false;
+let unloadTimers = new Map();   // year -> setTimeout id（用於折疊後 TTL 釋放 DOM）
+const UNLOAD_TTL_MS = 3 * 60 * 1000;  // 折疊超過 3 分鐘 → 移除 img DOM
+
+// 初始化 user / role 顯示
+document.getElementById('whoami').textContent = window.CURRENT_USER || '(未登入)';
+document.getElementById('role-tag').textContent = window.IS_ADMIN ? '(admin)' : '(viewer · 唯讀)';
+if(window.IS_ADMIN){ document.body.classList.add('admin'); }
+
+// kind toggle 顯示邏輯
+const kt = document.getElementById('kindToggle');
+if(kt){
+  const btnFace = kt.querySelector('[data-kind="face"]');
+  const btnPet  = kt.querySelector('[data-kind="pet"]');
+  // viewer：不分 face/pet，直接 kind=all，整個 toggle 隱藏
+  if(!window.IS_ADMIN){
+    window.KIND = 'all';
+    kt.classList.add('hidden');
+  } else {
+    if(btnFace) btnFace.style.display = window.HAS_FACE ? '' : 'none';
+    if(btnPet)  btnPet.style.display  = window.HAS_PET  ? '' : 'none';
+    if(!window.HAS_FACE && !window.HAS_PET) kt.classList.add('hidden');
+    if(!(window.HAS_FACE && window.HAS_PET)) kt.classList.add('hidden');
+    // admin 預設 kind
+    if(!window.HAS_FACE && window.HAS_PET){
+      window.KIND = 'pet';
+      if(btnPet) btnPet.classList.add('active');
+      if(btnFace) btnFace.classList.remove('active');
+    }
+  }
+}
+
+function logout(){
+  fetch('/api/logout',{method:'POST'}).then(()=>location.href='/login');
+}
+
+loadStats();
+loadPage(0);
+
+// Esc 關 modal
+document.addEventListener('keydown', e=>{
+  if(e.key !== 'Escape') return;
+  if(document.getElementById('expandModal').classList.contains('active')){
+    closeExpand();
+  } else if(document.getElementById('moveModal').classList.contains('active')){
+    closeMove();
+  } else if(document.getElementById('mergeModal').classList.contains('active')){
+    closeMerge();
+  }
+});
+
+// kind toggle
+function setKind(k){
+  if(k === window.KIND) return;
+  if(k === 'pet' && !window.HAS_PET){ return; }
+  if(k === 'face' && !window.HAS_FACE){ return; }
+  window.KIND = k;
+  document.querySelectorAll('.kind-toggle button').forEach(b => {
+    b.classList.toggle('active', b.dataset.kind === k);
+  });
+  // 切 kind 時清掉現有狀態並重載
+  ITEMS = [];
+  currentPage = 0;
+  document.getElementById('grid').innerHTML = '';
+  loadStats();
+  loadPage(0);
+}
+
+function loadStats(){
+  fetch(kq('/api/stats')).then(r=>r.json()).then(d=>{
+    document.getElementById('subtitle').textContent =
+      `共 ${d.total} 個原始群組，合併後 ${d.displayed} 個可顯示`;
+    document.getElementById('stats').innerHTML =
+      `<span style="color:#4fc3f7">${d.named}</span> 已命名 · ` +
+      `<span style="color:#888">${d.skipped}</span> 已略過 · ` +
+      `<span style="color:#ce93d8">${d.merges}</span> 已合併`;
+  });
+}
+
+function loadPage(page){
+  document.getElementById('spinner').style.display = 'block';
+  document.getElementById('grid').innerHTML = '';
+  return fetch(kq(`/api/page?page=${page}&filter=${filter}`)).then(r=>r.json()).then(d=>{
+    ITEMS = d.items;
+    currentPage = d.page;
+    totalPages = d.total_pages;
+    totalCount = d.total;
+    renderGrid();
+    renderPager();
+    document.getElementById('spinner').style.display = 'none';
+    // 如果 expand modal 還開著，刷新內容
+    if(openExpandFid) renderExpandBody();
+  });
+}
+
+function renderPager(){
+  const html = `
+    <button onclick="loadPage(0)" ${currentPage===0?'disabled':''}>«</button>
+    <button onclick="loadPage(${currentPage-1})" ${currentPage===0?'disabled':''}>‹</button>
+    <span class="info">第
+      <input type="number" min="1" max="${totalPages}" value="${currentPage+1}"
+             onchange="loadPage(this.value-1)"> / ${totalPages} 頁
+      · 共 ${totalCount} 筆</span>
+    <button onclick="loadPage(${currentPage+1})" ${currentPage>=totalPages-1?'disabled':''}>›</button>
+    <button onclick="loadPage(${totalPages-1})" ${currentPage>=totalPages-1?'disabled':''}>»</button>
+  `;
+  document.getElementById('pagerTop').innerHTML = html;
+  document.getElementById('pagerBottom').innerHTML = html;
+}
+
+function renderGrid(){
+  const grid = document.getElementById('grid');
+  if(viewMode === 'list' && filter === 'named'){
+    grid.className = 'list';
+    grid.innerHTML = ITEMS.map(c => renderListRow(c)).join('');
+  } else {
+    grid.className = 'grid';
+    grid.innerHTML = ITEMS.map(c => renderCard(c)).join('');
+  }
+}
+
+function renderListRow(c){
+  const fid = c.id;
+  const nameClick = window.IS_ADMIN ? `onclick="editNameInline('${fid}')"` : '';
+  const actions = window.IS_ADMIN ? `
+    <div class="lr-actions">
+      <button onclick="editNameInline('${fid}')">✏️ 改名</button>
+      <button onclick="openMerge('${fid}')">🔗 合併</button>
+      <button onclick="undoAction('${fid}')">↩ 取消命名</button>
+    </div>` : '<div></div>';
+  return `
+    <div class="list-row" id="row_${fid}">
+      <img class="lr-thumb" src="${thumbUrl(fid, c.thumb_v, c.kind)}" onerror="this.style.visibility='hidden'">
+      <div class="lr-id">${fid}</div>
+      <div class="lr-name" id="name_${fid}" ${nameClick}>${c.name}</div>
+      <div class="lr-count">${c.count} 張</div>
+      ${actions}
+    </div>
+  `;
+}
+
+function editNameInline(fid){
+  const c = ITEMS.find(x=>x.id===fid);
+  if(!c) return;
+  const cell = document.getElementById('name_'+fid);
+  if(!cell) return;
+  const current = c.name || '';
+  cell.innerHTML = `<input class="lr-name-input" id="inp_${fid}" value="${current.replace(/"/g,'&quot;')}"
+    onblur="commitInlineName('${fid}')"
+    onkeydown="if(event.key==='Enter')commitInlineName('${fid}');else if(event.key==='Escape')cancelInlineName('${fid}')">`;
+  const inp = document.getElementById('inp_'+fid);
+  inp.focus();
+  inp.select();
+}
+
+function commitInlineName(fid){
+  const inp = document.getElementById('inp_'+fid);
+  if(!inp) return;
+  const v = inp.value.trim();
+  const c = ITEMS.find(x=>x.id===fid);
+  if(!c) return;
+  if(!v){ cancelInlineName(fid); return; }
+  if(v === c.name){ cancelInlineName(fid); return; }
+  post('/api/name',{face_id:fid,name:v}).then(()=>{
+    c.name = v;
+    document.getElementById('name_'+fid).textContent = v;
+    loadStats();
+  });
+}
+
+function cancelInlineName(fid){
+  const c = ITEMS.find(x=>x.id===fid);
+  if(!c) return;
+  const cell = document.getElementById('name_'+fid);
+  if(cell) cell.textContent = c.name || '';
+}
+
+function toggleView(){
+  viewMode = viewMode === 'grid' ? 'list' : 'grid';
+  document.getElementById('viewToggle').textContent =
+    viewMode === 'list' ? '🖼 圖片模式' : '📋 清單模式';
+  renderGrid();
+}
+
+// ---- 多選合併 ----
+function toggleClusterSelectMode(){
+  clusterSelectMode = !clusterSelectMode;
+  if(!clusterSelectMode){ selectedClusterIds.clear(); }
+  document.getElementById('clusterSelectBtn').classList.toggle('active', clusterSelectMode);
+  document.getElementById('clusterSelectBar').classList.toggle('active', clusterSelectMode);
+  updateClusterSelectCount();
+  renderGrid();
+}
+function exitClusterSelectMode(){ clusterSelectMode = false; selectedClusterIds.clear(); toggleClusterSelectMode(); /* second toggle re-applies; cheap */ }
+function clearClusterSelection(){ selectedClusterIds.clear(); updateClusterSelectCount(); renderGrid(); }
+function selectAllVisibleClusters(){
+  ITEMS.forEach(c => selectedClusterIds.add(c.id));
+  updateClusterSelectCount();
+  renderGrid();
+}
+function toggleClusterSelected(fid){
+  if(selectedClusterIds.has(fid)) selectedClusterIds.delete(fid);
+  else selectedClusterIds.add(fid);
+  updateClusterSelectCount();
+  // 只重畫該卡片，避免整頁重 render
+  const card = document.getElementById('card_' + fid);
+  if(card) card.classList.toggle('cluster-selected', selectedClusterIds.has(fid));
+  const cb = document.getElementById('cb_' + fid);
+  if(cb) cb.checked = selectedClusterIds.has(fid);
+}
+function updateClusterSelectCount(){
+  const el = document.getElementById('clusterSelectCount');
+  if(el) el.textContent = selectedClusterIds.size;
+}
+function openBatchMerge(){
+  if(selectedClusterIds.size === 0){ alert('請先勾選 cluster'); return; }
+  mergeSources = Array.from(selectedClusterIds);
+  document.getElementById('mergeFilter').value='';
+  fetch(kq('/api/clusters')).then(r=>r.json()).then(list=>{
+    // 目標不能是已選中的任何一個
+    allClusters = list.filter(c => !selectedClusterIds.has(c.id));
+    renderMergeOptions(allClusters);
+    document.getElementById('mergeModal').classList.add('active');
+    setTimeout(()=>document.getElementById('mergeFilter').focus(), 50);
+  });
+}
+
+function batchSkip(){
+  if(selectedClusterIds.size === 0){ alert('請先勾選 cluster'); return; }
+  const ids = Array.from(selectedClusterIds);
+  if(!confirm(`確定要把 ${ids.length} 個 cluster 都標為「略過」？`)) return;
+  post('/api/skip-batch', {face_ids: ids}).then(r => r.json()).then(d => {
+    // 退出多選 + 重載
+    clusterSelectMode = false;
+    selectedClusterIds.clear();
+    document.getElementById('clusterSelectBtn').classList.remove('active');
+    document.getElementById('clusterSelectBar').classList.remove('active');
+    loadStats();
+    loadPage(currentPage);
+  });
+}
+
+function renderCard(c){
+  const fid = c.id;
+  // viewer：簡化成大頭像 + 名字的 tile，整塊可點 → openExpand
+  if(!window.IS_ADMIN){
+    const label = c.name || fid;
+    return `
+      <div class="tile" onclick="openExpand('${fid}')" role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' ')openExpand('${fid}')">
+        <img class="avatar" src="${thumbUrl(fid, c.thumb_v, c.kind)}" alt="${label.replace(/"/g,'&quot;')}" loading="lazy" onerror="this.style.visibility='hidden'">
+        <div class="tname">${label}</div>
+      </div>`;
+  }
+  const isNamed = !!c.name;
+  const isSkipped = !!c.skipped;
+  const isSelected = clusterSelectMode && selectedClusterIds.has(fid);
+  const cls = 'card' + (isNamed?' named':'') + (isSkipped?' skipped':'') + (isSelected?' cluster-selected':'');
+
+  // 多選模式：整張卡片 click 切換選取（覆蓋掉其它互動）
+  const cardClickHandler = clusterSelectMode
+    ? `onclick="toggleClusterSelected('${fid}')"`
+    : '';
+  const selectCheckbox = clusterSelectMode
+    ? `<input type="checkbox" id="cb_${fid}" class="cluster-cb" ${isSelected?'checked':''}
+              onclick="event.stopPropagation();toggleClusterSelected('${fid}')">`
+    : '';
+
+  const previewCount = Math.min(Math.max(6, c.images.length), 8);
+  const previewImgs = c.images.slice(0,previewCount).map(img=>
+    `<img src="/img_thumb/${img}?w=200" loading="lazy" decoding="async"
+          onclick="window.open('/image/${img}')">`
+  ).join('');
+
+  let actions = '';
+  // 多選模式下隱藏每張卡的 action（避免誤點）
+  if(window.IS_ADMIN && !clusterSelectMode){
+    if(isSkipped){
+      actions = `<span style="color:#666">已略過</span>
+        <button class="btn btn-edit" onclick="toggleSkip('${fid}')">↩ 恢復</button>`;
+    } else if(isNamed){
+      actions = `
+        <button class="btn btn-edit" onclick="editName('${fid}')">✏️ 改名</button>
+        <button class="btn btn-undo" onclick="undoAction('${fid}')">↩ 取消命名</button>
+        <button class="btn btn-merge" onclick="openMerge('${fid}')">🔗 合併</button>
+      `;
+    } else {
+      actions = `
+        <input type="text" id="inp_${fid}" placeholder="輸入名稱..." onkeydown="if(event.key==='Enter')saveName('${fid}')">
+        <button class="btn btn-save" onclick="saveName('${fid}')">💾</button>
+        <button class="btn btn-skip" onclick="toggleSkip('${fid}')">⏭️ 略過</button>
+        <button class="btn btn-merge" onclick="openMerge('${fid}')">🔗 合併</button>
+      `;
+    }
+  }
+
+  const badges = [];
+  if((c.merged_from||[]).length > 0)
+    badges.push(`<div class="merged-badge">已合併 ${c.merged_from.length} 群</div>`);
+  if(c.moved_in_count > 0)
+    badges.push(`<div class="merged-badge" style="background:#2a4a3a;color:#a5d6a7">← 移入 ${c.moved_in_count} 張</div>`);
+  if(c.moved_away_count > 0)
+    badges.push(`<div class="merged-badge" style="background:#4a3a2a;color:#ffcc80">→ 移出 ${c.moved_away_count} 張</div>`);
+  const mergedBadge = badges.join('');
+
+  return `
+    <div class="${cls}" id="card_${fid}" ${cardClickHandler}>
+      ${selectCheckbox}
+      <div class="card-top">
+        <div class="face-meta">
+          <h3>${c.name || fid}</h3>
+          ${c.name ? `<div style="color:#666;font-size:11px;font-family:monospace;margin-top:2px">${fid}</div>` : ''}
+          <div class="count">${c.count} 張${c.count!==c.original_count?' (原 '+c.original_count+')':''}</div>
+          ${mergedBadge}
+        </div>
+        <img class="face-thumb" src="${thumbUrl(fid, c.thumb_v, c.kind)}" onerror="this.style.display='none'">
+      </div>
+      <div class="photo-grid">${previewImgs}</div>
+      <div class="expand-bar" onclick="event.stopPropagation();openExpand('${fid}')">
+        <span>📂 展開查看全部 ${c.count} 張</span>
+        <span>↗</span>
+      </div>
+      <div class="actions">${actions}</div>
+    </div>
+  `;
+}
+
+function openExpand(fid){
+  openExpandFid = fid;
+  openExpandMeta = null;
+  yearFilter = '';
+  monthFilter = '';
+  collapsedYears.clear();
+  materializedYears.clear();
+  removedSectionCollapsed = true;
+  removedSectionMaterialized = false;
+  for(const t of unloadTimers.values()) clearTimeout(t);
+  unloadTimers.clear();
+  if(selectMode && selectMode !== fid){
+    selectMode = null;
+    selectedPaths.clear();
+    renderSelectBar();
+  }
+  document.getElementById('expandBody').innerHTML = '<div style="padding:30px;color:#888;text-align:center">載入中…</div>';
+  document.getElementById('expandModal').classList.add('active');
+  // 用 item 自己的 kind（混合模式下必要），fallback 到 window.KIND
+  const it = ITEMS.find(x => x.id === fid);
+  const itemKind = (it && it.kind) || (window.KIND === 'all' ? 'face' : window.KIND);
+  fetch(`/api/cluster_meta?fid=${encodeURIComponent(fid)}&kind=${encodeURIComponent(itemKind)}`).then(r=>r.json()).then(meta=>{
+    if(openExpandFid !== fid) return;
+    openExpandMeta = meta;
+    // 預設：只展開最新年度，其餘折疊。「無日期」也預設折疊。
+    const yearSet = new Set();
+    let hasUndated = false;
+    for(const x of meta.images){
+      if(x.year) yearSet.add(String(x.year));
+      else hasUndated = true;
+    }
+    const ys = [...yearSet].sort((a,b)=>Number(b)-Number(a));
+    const latest = ys[0];
+    collapsedYears = new Set(ys.filter(y => y !== latest));
+    if(hasUndated) collapsedYears.add('無日期');
+    materializedYears = new Set(latest ? [latest] : []);
+    renderExpandBody();
+  });
+}
+
+function closeExpand(){
+  document.getElementById('expandModal').classList.remove('active');
+  openExpandFid = null;
+  openExpandMeta = null;
+  collapsedYears.clear();
+  materializedYears.clear();
+  removedSectionCollapsed = true;
+  removedSectionMaterialized = false;
+  for(const t of unloadTimers.values()) clearTimeout(t);
+  unloadTimers.clear();
+  if(selectMode){
+    selectMode = null;
+    selectedPaths.clear();
+    renderSelectBar();
+  }
+}
+
+function renderExpandBody(){
+  if(!openExpandFid || !openExpandMeta) return;
+  const c = ITEMS.find(x=>x.id===openExpandFid);
+  if(!c){ closeExpand(); return; }
+  const fid = c.id;
+  const inSelect = selectMode === fid;
+
+  // viewer 只顯示名字（不露 face_id），admin 則同時顯示 ID 方便除錯
+  document.getElementById('expandTitle').textContent =
+    window.IS_ADMIN ? (c.name ? `${c.name}  (${fid})` : fid)
+                    : (c.name || '');
+  // viewer 不顯示「(原 N)」避免暴露被擋掉的照片數
+  document.getElementById('expandMeta').textContent =
+    window.IS_ADMIN && c.count !== c.original_count
+      ? `${c.count} 張 (原 ${c.original_count})`
+      : `${c.count} 張`;
+
+  // 套 filter
+  const allItems = openExpandMeta.images || [];
+  const filtered = allItems.filter(x => {
+    if(yearFilter !== '' && String(x.year||'') !== String(yearFilter)) return false;
+    if(monthFilter !== '' && String(x.month||'') !== String(monthFilter)) return false;
+    return true;
+  });
+
+  // 取得可選年份（從未過濾的清單）
+  const yearSet = new Set();
+  for(const x of allItems) if(x.year) yearSet.add(x.year);
+  const years = [...yearSet].sort((a,b)=>b-a);
+  const yearOptions = years.map(y => `<option value="${y}" ${String(y)===String(yearFilter)?'selected':''}>${y}</option>`).join('');
+  const monthOptions = Array.from({length:12},(_,i)=>i+1).map(m =>
+    `<option value="${m}" ${String(m)===String(monthFilter)?'selected':''}>${m} 月</option>`).join('');
+
+  // header 多選按鈕的狀態同步
+  const headerBtn = document.getElementById('expandSelectBtn');
+  if(headerBtn){
+    headerBtn.textContent = inSelect ? '✓ 多選中' : '🔲 多選';
+    headerBtn.style.background = inSelect ? '#4fc3f7' : '#222';
+    headerBtn.style.color = inSelect ? '#000' : '#ccc';
+    headerBtn.style.borderColor = inSelect ? '#4fc3f7' : '#444';
+  }
+  const tools = `
+    ${inSelect ? '<div class="expand-tools"><span class="hint">點縮圖切換選取；底部 bar 操作</span></div>' : ''}
+    <div class="year-filter">
+      <span style="color:#888">篩選：</span>
+      <select onchange="yearFilter=this.value; renderExpandBody();">
+        <option value="">全部年份</option>
+        ${yearOptions}
+        ${allItems.some(x=>!x.year) ? `<option value="null" ${yearFilter==='null'?'selected':''}>無日期</option>` : ''}
+      </select>
+      <select onchange="monthFilter=this.value; renderExpandBody();">
+        <option value="">全部月份</option>
+        ${monthOptions}
+      </select>
+      ${(yearFilter||monthFilter) ? '<button class="clear" onclick="yearFilter=\'\';monthFilter=\'\';renderExpandBody();">清除</button>' : ''}
+      <span style="color:#888;margin-left:auto">顯示 ${filtered.length} / ${allItems.length}</span>
+    </div>`;
+
+  // 按年分組（同年內已按 ts desc），key 統一為 string
+  const byYear = new Map();
+  for(const x of filtered){
+    const key = String(x.year || '無日期');
+    if(!byYear.has(key)) byYear.set(key, []);
+    byYear.get(key).push(x);
+  }
+  const yearKeys = [...byYear.keys()].sort((a,b)=>{
+    if(a==='無日期') return 1; if(b==='無日期') return -1;
+    return Number(b) - Number(a);
+  });
+
+  // 是否是當前 user 自己的 cluster（給 viewer 開放「自選頭像」）
+  const isOwnIdentity = !!window.IDENTITY && fid === window.IDENTITY;
+
+  function renderThumb(x){
+    const img = x.path;
+    const safeImg = img.replace(/'/g,"\'");
+    const isSel = inSelect && selectedPaths.has(img);
+    const wrapCls = 'thumb-wrap' + (inSelect?' selectable':'') + (isSel?' selected':'');
+    const imgClick = inSelect
+      ? `onclick="toggleThumbSelect('${fid}','${safeImg}')"`
+      : `onclick="window.open('/image/${img}')" style="cursor:pointer"`;
+    let actions = '';
+    if(!inSelect){
+      if(window.IS_ADMIN){
+        actions = `<div class="thumb-actions">
+          <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為群組特寫照">⭐</button>
+          <button class="move-btn" onclick="event.stopPropagation();openMove('${fid}','${safeImg}')" title="移到別群">→</button>
+          <button class="remove-btn" onclick="event.stopPropagation();removeImg('${fid}','${safeImg}')" title="移除">✕</button>
+        </div>`;
+      } else if(isOwnIdentity){
+        // viewer 在自己的 cluster：只能挑頭像，不能移動 / 移除
+        actions = `<div class="thumb-actions">
+          <button class="thumb-btn" onclick="event.stopPropagation();setAsThumb('${fid}','${safeImg}')" title="設為我的頭像">⭐</button>
+        </div>`;
+      }
+    }
+    return `<div class="${wrapCls}" data-thumb="${fid}|${img}">
+      <img src="/img_thumb/${img}?w=300" loading="lazy" decoding="async" ${imgClick}>
+      ${actions}
+    </div>`;
+  }
+
+  const sections = yearKeys.map(y => {
+    const items = byYear.get(y);
+    const collapsed = collapsedYears.has(y);
+    // Materialize only if expanded OR previously expanded and TTL still alive
+    let materialized = materializedYears.has(y);
+    // 防呆：展開但還沒 materialize → 自動補
+    if(!collapsed && !materialized){ materializedYears.add(y); materialized = true; }
+    const bodyHtml = materialized
+      ? `<div class="expand-photos">${items.map(renderThumb).join('')}</div>`
+      : `<div style="color:#666;font-size:12px;padding:6px 4px">點選展開以載入</div>`;
+    return `<div class="year-section ${collapsed?'collapsed':''}" data-year="${y}">
+      <div class="year-header" onclick="toggleYear('${y}')">
+        <span>${y} <span style="color:#888;font-weight:400;font-size:12px">(${items.length} 張)</span></span>
+        <span class="toggle">▼</span>
+      </div>
+      <div class="year-body">${bodyHtml}</div>
+    </div>`;
+  }).join('');
+
+  // viewer 不顯示「已移除」區段（管理用，與一般瀏覽無關）
+  const removed = window.IS_ADMIN ? (openExpandMeta.removed || []) : [];
+  let removedSection = '';
+  if(removed.length > 0){
+    const collapsed = removedSectionCollapsed;
+    let mat = removedSectionMaterialized;
+    if(!collapsed && !mat){ removedSectionMaterialized = true; mat = true; }
+    const removedImgs = removed.map(x =>
+      `<div class="thumb-wrap">
+        <img src="/img_thumb/${x.path}?w=200" loading="lazy" decoding="async">
+        <button class="restore-btn" onclick="restoreImg('${fid}','${x.path.replace(/'/g,"\'")}')" title="恢復">↩</button>
+      </div>`
+    ).join('');
+    const body = mat
+      ? `<div class="removed-grid">${removedImgs}</div>`
+      : `<div style="color:#666;font-size:12px;padding:6px 4px">點選展開以載入</div>`;
+    removedSection = `<div class="year-section ${collapsed?'collapsed':''}" data-removed="1" style="margin-top:14px">
+      <div class="year-header" style="background:#3a2424;color:#ef9a9a" onclick="toggleRemovedSection()">
+        <span>已移除 <span style="color:#888;font-weight:400;font-size:12px">(${removed.length} 張)</span></span>
+        <span class="toggle">▼</span>
+      </div>
+      <div class="year-body">${body}</div>
+    </div>`;
+  }
+
+  // 自己的 cluster：顯示挑頭像的提示橫幅
+  const selfHint = (isOwnIdentity && !window.IS_ADMIN)
+    ? `<div class="self-hint">💡 點任一張照片右上的 ⭐ 可設為你的頭像（其他人看你也會用這張）</div>`
+    : '';
+
+  document.getElementById('expandBody').innerHTML = `${selfHint}${tools}${sections}${removedSection}`;
+}
+
+function toggleRemovedSection(){
+  if(removedSectionCollapsed){
+    removedSectionCollapsed = false;
+    removedSectionMaterialized = true;
+  } else {
+    removedSectionCollapsed = true;
+    // TTL：3 min 後若仍 collapsed → 釋放 DOM
+    setTimeout(()=>{
+      if(!openExpandFid) return;
+      if(!removedSectionCollapsed) return;
+      removedSectionMaterialized = false;
+      renderExpandBody();
+    }, UNLOAD_TTL_MS);
+  }
+  renderExpandBody();
+}
+
+function toggleYear(y){
+  y = String(y);
+  if(collapsedYears.has(y)){
+    // 展開：取消預定的 unload + materialize（若尚未）
+    collapsedYears.delete(y);
+    if(unloadTimers.has(y)){ clearTimeout(unloadTimers.get(y)); unloadTimers.delete(y); }
+    materializedYears.add(y);
+  } else {
+    // 折疊：留 DOM、但 TTL 過後釋放
+    collapsedYears.add(y);
+    if(unloadTimers.has(y)) clearTimeout(unloadTimers.get(y));
+    const t = setTimeout(()=>{
+      if(!openExpandFid) return;
+      if(!collapsedYears.has(y)) return;  // 已被重新展開
+      materializedYears.delete(y);
+      unloadTimers.delete(y);
+      renderExpandBody();
+    }, UNLOAD_TTL_MS);
+    unloadTimers.set(y, t);
+  }
+  renderExpandBody();
+}
+
+function refreshExpandMeta(){
+  if(!openExpandFid) return Promise.resolve();
+  const it = ITEMS.find(x => x.id === openExpandFid);
+  const itemKind = (it && it.kind) || (window.KIND === 'all' ? 'face' : window.KIND);
+  return fetch(`/api/cluster_meta?fid=${encodeURIComponent(openExpandFid)}&kind=${encodeURIComponent(itemKind)}`)
+    .then(r=>r.json()).then(meta=>{
+      if(openExpandFid){ openExpandMeta = meta; renderExpandBody(); }
+    });
+}
+
+function toggleSelectMode(fid){
+  if(selectMode === fid){
+    selectMode = null;
+    selectedPaths.clear();
+  } else {
+    selectMode = fid;
+    selectedPaths.clear();
+  }
+  renderExpandBody();
+  renderSelectBar();
+}
+
+function exitSelectMode(){
+  selectMode = null;
+  selectedPaths.clear();
+  if(openExpandFid) renderExpandBody();
+  renderSelectBar();
+}
+
+function toggleThumbSelect(fid, img){
+  if(selectMode !== fid) return;
+  if(selectedPaths.has(img)) selectedPaths.delete(img);
+  else selectedPaths.add(img);
+  // 只更新該縮圖 class，不重渲整個 grid
+  const el = document.querySelector(`[data-thumb="${fid}|${img}"]`);
+  if(el) el.classList.toggle('selected', selectedPaths.has(img));
+  renderSelectBar();
+}
+
+function renderSelectBar(){
+  const bar = document.getElementById('selectBar');
+  if(selectedPaths.size === 0){
+    bar.classList.remove('active');
+    return;
+  }
+  bar.classList.add('active');
+  document.getElementById('selectCount').textContent = selectedPaths.size;
+}
+
+function moveSelected(){
+  if(!selectMode || selectedPaths.size === 0) return;
+  moveSource = selectMode;
+  movePath = null;  // null = batch
+  document.getElementById('moveFilter').value = '';
+  const ngn = document.getElementById('newGroupName'); if(ngn) ngn.value = '';
+  document.getElementById('movePreview').innerHTML =
+    `<div style="color:#4fc3f7;font-size:15px">批次移動 ${selectedPaths.size} 張</div>
+     <div style="color:#888;font-size:12px;margin-top:4px">來自 ${moveSource}</div>`;
+  fetch(kq('/api/clusters')).then(r=>r.json()).then(list=>{
+    allClusters = list.filter(c=>c.id !== moveSource);
+    renderMoveOptions(allClusters);
+    document.getElementById('moveModal').classList.add('active');
+    setTimeout(()=>document.getElementById('moveFilter').focus(),50);
+  });
+}
+
+function saveName(fid){
+  const inp = document.getElementById('inp_'+fid);
+  if(!inp||!inp.value.trim()) return;
+  post('/api/name',{face_id:fid,name:inp.value.trim()}).then(()=>{
+    loadStats(); loadPage(currentPage);
+  });
+}
+
+function editName(fid){
+  const c = ITEMS.find(x=>x.id===fid);
+  if(!c) return;
+  const current = c.name;
+  // 簡化：直接清空名稱、重渲染、focus 輸入框
+  c.name = '';
+  renderGrid();
+  setTimeout(()=>{
+    const inp=document.getElementById('inp_'+fid);
+    if(inp){inp.value=current; inp.focus(); inp.select();}
+  },30);
+}
+
+function undoAction(fid){
+  post('/api/name',{face_id:fid,name:''}).then(()=>{
+    loadStats(); loadPage(currentPage);
+  });
+}
+
+function toggleSkip(fid){
+  post('/api/skip',{face_id:fid}).then(()=>{
+    loadStats(); loadPage(currentPage);
+  });
+}
+
+function openMerge(fid){
+  mergeSource=fid;
+  document.getElementById('mergeFilter').value='';
+  // fetch 完整列表（按需）
+  fetch(kq('/api/clusters')).then(r=>r.json()).then(list=>{
+    allClusters = list.filter(c=>c.id!==fid);
+    renderMergeOptions(allClusters);
+    document.getElementById('mergeModal').classList.add('active');
+    setTimeout(()=>document.getElementById('mergeFilter').focus(),50);
+  });
+}
+
+function renderMergeOptions(list){
+  const sel = document.getElementById('mergeTarget');
+  sel.innerHTML = list.map(c=>
+    `<option value="${c.id}">${c.id}${c.name?' · '+c.name:''} (${c.count} 張)</option>`
+  ).join('');
+}
+
+function filterMergeOptions(){
+  const q = document.getElementById('mergeFilter').value.toLowerCase();
+  if(!q){ renderMergeOptions(allClusters); return; }
+  const filtered = allClusters.filter(c=>
+    c.id.toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q)
+  );
+  renderMergeOptions(filtered);
+}
+
+function confirmMerge(){
+  const tgt = document.getElementById('mergeTarget').value;
+  if(!tgt) return;
+  // 多選 batch 模式
+  if(mergeSources.length > 0){
+    if(!confirm(`確定把 ${mergeSources.length} 個 cluster 合併到「${tgt}」？`)) return;
+    post('/api/merge-batch', {source_ids: mergeSources, target_id: tgt}).then(r => r.json()).then(d => {
+      closeMerge();
+      mergeSources = [];
+      // 離開多選模式並清掉選取狀態
+      clusterSelectMode = false;
+      selectedClusterIds.clear();
+      document.getElementById('clusterSelectBtn').classList.remove('active');
+      document.getElementById('clusterSelectBar').classList.remove('active');
+      loadStats();
+      loadPage(currentPage);
+    });
+    return;
+  }
+  post('/api/merge',{source_id:mergeSource,target_id:tgt}).then(()=>{
+    closeMerge();
+    loadStats();
+    loadPage(currentPage);
+  });
+}
+
+function closeMerge(){document.getElementById('mergeModal').classList.remove('active');}
+
+function openMove(fid, imgPath){
+  moveSource = fid;
+  movePath = imgPath;
+  document.getElementById('moveFilter').value = '';
+  const ngn = document.getElementById('newGroupName'); if(ngn) ngn.value = '';
+  document.getElementById('movePreview').innerHTML =
+    `<img src="/img_thumb/${imgPath}?w=300" style="max-height:140px;border-radius:6px;border:2px solid #333">
+     <div style="color:#888;font-size:12px;margin-top:6px">來自 ${fid}</div>`;
+  fetch(kq('/api/clusters')).then(r=>r.json()).then(list=>{
+    allClusters = list.filter(c=>c.id !== fid);
+    renderMoveOptions(allClusters);
+    document.getElementById('moveModal').classList.add('active');
+    setTimeout(()=>document.getElementById('moveFilter').focus(),50);
+  });
+}
+
+function renderMoveOptions(list){
+  const sel = document.getElementById('moveTarget');
+  sel.innerHTML = list.map(c=>
+    `<option value="${c.id}">${c.id}${c.name?' · '+c.name:''} (${c.count} 張)</option>`
+  ).join('');
+}
+
+function filterMoveOptions(){
+  const q = document.getElementById('moveFilter').value.toLowerCase();
+  const filtered = q ? allClusters.filter(c=>
+    c.id.toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q)
+  ) : allClusters;
+  renderMoveOptions(filtered);
+}
+
+function confirmMove(){
+  const tgt = document.getElementById('moveTarget').value;
+  if(!tgt) return;
+  doMove(tgt);
+}
+
+function moveToNew(){
+  const nm = (document.getElementById('newGroupName').value || '').trim();
+  doMove('__new__', nm);
+}
+
+function doMove(tgt, newName){
+  const isBatch = movePath === null;
+  const batchBody = {from_id:moveSource, to_id:tgt, paths:[...selectedPaths]};
+  const singleBody = {from_id:moveSource, to_id:tgt, image_path:movePath};
+  if(newName){ batchBody.new_name = newName; singleBody.new_name = newName; }
+  const req = isBatch ? post('/api/move-batch', batchBody) : post('/api/move', singleBody);
+  req.then(r=>r.json()).then(d=>{
+    closeMove();
+    if(isBatch){
+      selectMode = null;
+      selectedPaths.clear();
+      renderSelectBar();
+    }
+    loadStats();
+    loadPage(currentPage).then(()=>{ if(openExpandFid) refreshExpandMeta(); });
+    if(tgt === '__new__' && d && d.to_id){
+      const nm = (document.getElementById('newGroupName')||{}).value || '';
+      setTimeout(()=>{
+        alert(nm.trim()
+          ? `已建立新群組「${nm.trim()}」 (${d.to_id})`
+          : `已建立新群組 ${d.to_id}，請後續手動命名。`);
+      }, 100);
+    }
+  });
+}
+
+function closeMove(){document.getElementById('moveModal').classList.remove('active');}
+
+function setAsThumb(fid, img){
+  fetch('/api/set_thumb', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({face_id: fid, image_path: img})
+  }).then(r=>r.json()).then(d=>{
+    if(!d.ok){ alert('設定失敗：' + (d.error || '未知錯誤')); return; }
+    // cache-bust 換新的縮圖 (face or pet kind 視 window.KIND 而定)
+    const ts = Date.now();
+    const fresh = thumbUrl(fid, ts);
+    const base = (window.KIND === 'pet') ? '/pet_thumb/' : '/thumb/';
+    document.querySelectorAll(`img.face-thumb[src*="${base}${fid}.jpg"]`).forEach(el=>{
+      el.src = fresh;
+    });
+    const lrThumb = document.querySelector(`.lr-thumb[src*="${base}${fid}.jpg"]`);
+    if(lrThumb) lrThumb.src = fresh;
+  });
+}
+
+function removeImg(fid,img){
+  post('/api/remove',{face_id:fid,image_path:img}).then(()=>{
+    const c=ITEMS.find(x=>x.id===fid);
+    if(c){
+      c.images=c.images.filter(i=>i!==img);
+      c.removed=[...(c.removed||[]),img];
+      c.count=c.images.length;
+      renderGrid();
+    }
+    if(openExpandFid===fid) refreshExpandMeta();
+  });
+}
+
+function restoreImg(fid,img){
+  post('/api/restore',{face_id:fid,image_path:img}).then(()=>{
+    const c=ITEMS.find(x=>x.id===fid);
+    if(c){
+      c.images.push(img);
+      c.removed=(c.removed||[]).filter(i=>i!==img);
+      c.count=c.images.length;
+      renderGrid();
+    }
+    if(openExpandFid===fid) refreshExpandMeta();
+  });
+}
+
+function setFilter(f){
+  filter=f;
+  document.querySelectorAll('.toolbar button[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter===f));
+  // 清單模式只在 named filter 下可用
+  const tgl = document.getElementById('viewToggle');
+  if(f === 'named'){
+    tgl.style.display = '';
+  } else {
+    tgl.style.display = 'none';
+    if(viewMode === 'list'){
+      viewMode = 'grid';
+      tgl.textContent = '📋 清單模式';
+    }
+  }
+  loadPage(0);
+}
+
+function post(url,data){
+  // 自動帶上目前的 KIND（face / pet），讓所有 admin mutation 落到對的檔案
+  const payload = (window.KIND && data && typeof data === 'object' && !data.kind)
+    ? {...data, kind: window.KIND} : data;
+  return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+}
+
+// 在 URL 加上 kind 參數（給 GET 用）
+function kq(url){
+  if(!window.KIND || window.KIND === 'face') return url;   // 預設 face 不必加，向下相容
+  const sep = url.includes('?') ? '&' : '?';
+  return url + sep + 'kind=' + encodeURIComponent(window.KIND);
+}
+
+// 取得 cluster 縮圖路徑。kindOverride 可由 item.kind 傳入（用於 kind=all viewer 混合視圖）
+function thumbUrl(fid, ver, kindOverride){
+  const k = kindOverride || window.KIND;
+  const base = (k === 'pet') ? '/pet_thumb/' : '/thumb/';
+  return base + encodeURIComponent(fid) + '.jpg?v=' + (ver || 0);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html data-theme="morandi"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>登入 · 人臉命名工具</title>
+<!--V05_ASSETS-->
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#111;color:#e0e0e0;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#1a1a1a;padding:30px;border-radius:12px;border:1px solid #333;max-width:360px;width:100%}
+h1{font-size:20px;margin-bottom:18px;color:#4fc3f7;text-align:center}
+input{width:100%;padding:11px 12px;background:#222;color:#fff;border:1px solid #333;border-radius:6px;font-size:15px;margin-bottom:12px}
+input:focus{border-color:#4fc3f7;outline:none}
+button{width:100%;padding:12px;background:#4fc3f7;color:#000;border:none;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer}
+button:hover{background:#3fb3e7}
+.err{color:#ef5350;font-size:13px;margin-top:8px;text-align:center;min-height:20px}
+</style>
+</head><body>
+<form class="card" onsubmit="event.preventDefault();login()">
+  <h1>👥 人臉命名工具</h1>
+  <input id="u" type="text" placeholder="使用者名稱" autofocus autocomplete="username">
+  <input id="p" type="password" placeholder="密碼" autocomplete="current-password">
+  <button type="submit">登入</button>
+  <div class="err" id="err"></div>
+</form>
+<script>
+function login(){
+  fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username:document.getElementById('u').value,password:document.getElementById('p').value})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok) location.href='/';
+      else document.getElementById('err').textContent=d.error||'登入失敗';
+    });
+}
+</script>
+</body></html>
