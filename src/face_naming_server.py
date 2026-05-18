@@ -65,7 +65,7 @@ KIND_PATHS = {
 
 # 圖片縮圖 cache 兩種共用（縮圖跟分類無關）
 IMG_THUMB_CACHE = FACES_DIR / "img_thumb_cache"
-PAGE_SIZE = 20
+PAGE_SIZE = 24  # divisible by 2/3/4/6 so most grid breakpoints fill cleanly
 
 # --- backward-compat aliases (face) — old code paths still reference these names
 FACES_FILE = KIND_PATHS["face"]["clusters"]
@@ -608,6 +608,10 @@ class Handler(SimpleHTTPRequestHandler):
     def html(self, content):
         self.send_response(200)
         self.send_header("Content-type", "text/html; charset=utf-8")
+        # During v0.5 active dev: force browsers to re-fetch HTML so CSS/JS edits show up
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.end_headers()
         self.wfile.write(content.encode())
 
