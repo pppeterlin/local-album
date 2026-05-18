@@ -1,6 +1,14 @@
-<!-- v0.5 frontend assets: Tailwind Play CDN + DaisyUI v4 + Morandi theme -->
+<!-- v0.5 frontend assets: Tailwind Play CDN + DaisyUI v4 + Morandi theme + lucide -->
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css">
+<!-- lucide: flat line icons. Use <i data-lucide="x"></i>. After dynamic
+     innerHTML updates, call window.refreshIcons() to render new icons. -->
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>
+  // Idempotent — safe to call repeatedly after DOM mutations.
+  window.refreshIcons = function(){ try{ lucide.createIcons(); }catch(e){} };
+  document.addEventListener('DOMContentLoaded', window.refreshIcons);
+</script>
 <style>
 [data-theme="morandi"] {
   color-scheme: light;
