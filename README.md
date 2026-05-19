@@ -436,6 +436,13 @@ volume name is consistent.
 
 ---
 
+## Roadmap
+
+- **v0.5** — Frontend refactor (Tailwind + DaisyUI, Morandi theme, unified viewer/admin/face-naming UI)
+- **v0.6** — Album features (overview mode, timeline, themed memories incl. "on this day")
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

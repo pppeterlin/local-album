@@ -124,7 +124,7 @@ class PetDetector:
         model = torch.hub.load("facebookresearch/dinov2", DINOV2_VARIANT, pretrained=True, source="github")
         model = model.to(self.embed_device).eval()
         self._embed_model = model
-        # ImageNet 標準預處理
+        # ImageNet 標準預處理（DINOv2 預訓練格式）
         self._embed_transform = transforms.Compose([
             transforms.Resize(DINOV2_INPUT_SIZE, interpolation=transforms.InterpolationMode.BICUBIC),
             transforms.CenterCrop(DINOV2_INPUT_SIZE),

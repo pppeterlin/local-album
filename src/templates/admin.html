@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html data-theme="morandi"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理 · Local Album</title>
+<!--V05_ASSETS-->
+<style>
+/* v0.5 Phase 4: Morandi restyle of admin. Class names preserved, JS untouched. */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:hsl(var(--b1))}
+/* !important to defeat Tailwind Play CDN preflight's body{margin:0} which
+   is injected after our <style> in cascade order. */
+body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,sans-serif;
+  color:hsl(var(--bc));padding:24px 28px 80px;line-height:1.5;
+  max-width:1400px !important;margin:0 auto !important;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;letter-spacing:-0.005em;
+  display:grid;grid-template-columns:200px 1fr;grid-template-rows:auto 1fr;
+  grid-template-areas:"header header" "sidebar main";gap:8px 36px;align-items:start}
+@media (min-width:1900px){ body{max-width:1700px !important} }
+@media (min-width:2400px){ body{max-width:2000px !important} }
+@media (max-width:768px){
+  body{grid-template-columns:1fr;grid-template-areas:"header" "sidebar" "main";gap:8px}
+}
+/* Direct children get placed into grid areas via class */
+.admin-header{grid-area:header}
+.tabs{grid-area:sidebar}
+.panel{grid-area:main}
+a{color:hsl(var(--p));text-decoration:none}
+
+/* lucide icons */
+[data-lucide]{display:block;width:1em;height:1em;stroke-width:1.75;flex-shrink:0}
+
+.userbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;color:hsl(var(--bc) / 0.7);font-size:14px;gap:12px;flex-wrap:wrap;line-height:1}
+.userbar > div{display:flex;align-items:center;gap:10px}
+.userbar .who{color:hsl(var(--bc));font-weight:500}
+.userbar a,.userbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:8px 14px;background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:999px;
+  font-size:13px;cursor:pointer;text-decoration:none;transition:all .2s ease-out;line-height:1}
+.userbar a:hover,.userbar button:hover{background:hsl(var(--b3));transform:translateY(-1px);box-shadow:0 2px 8px hsl(var(--n) / 0.06)}
+.userbar a:active,.userbar button:active{transform:scale(.96)}
+
+h1{font-size:28px;color:hsl(var(--bc));margin:8px 0 16px;font-weight:600;letter-spacing:-0.02em;
+  display:flex;align-items:center;gap:10px}
+
+/* Vertical sidebar tabs (iOS Settings-style) */
+.tabs{display:flex;flex-direction:column;gap:2px;padding:4px;position:sticky;top:24px}
+.tabs button{display:flex;align-items:center;gap:10px;padding:10px 14px;background:transparent;
+  border:none;color:hsl(var(--bc) / 0.75);font-size:14px;font-weight:500;cursor:pointer;
+  border-radius:10px;text-align:left;transition:all .15s ease-out}
+.tabs button:hover{background:hsl(var(--b2));color:hsl(var(--bc))}
+.tabs button.active{background:hsl(var(--p));color:hsl(var(--pc));box-shadow:0 1px 4px hsl(var(--p) / 0.2)}
+.tabs button.active:hover{background:hsl(var(--p));color:hsl(var(--pc))}
+@media (max-width:768px){
+  .tabs{flex-direction:row;overflow-x:auto;padding:0;position:static;
+    margin:0 -12px;padding:0 12px;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{flex-shrink:0;padding:8px 14px}
+}
+
+.panel{display:none}
+.panel.active{display:block}
+
+.card{background:hsl(var(--b2));border:1px solid hsl(var(--b3));border-radius:14px;padding:16px;margin-bottom:14px;transition:box-shadow .2s}
+.card:hover{box-shadow:0 2px 10px hsl(var(--n) / 0.06)}
+
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.row > *{flex:0 0 auto}
+.row label{color:hsl(var(--bc) / 0.65);font-size:12px}
+
+input[type=text],input[type=password],select{background:hsl(var(--b1));color:hsl(var(--bc));border:1px solid hsl(var(--b3));border-radius:6px;padding:7px 10px;font-size:13px;transition:border-color .15s}
+input:focus,select:focus{border-color:hsl(var(--p));outline:none}
+
+button.primary{background:hsl(var(--p));color:hsl(var(--pc));border:none;padding:7px 14px;border-radius:6px;font-weight:600;cursor:pointer;font-size:13px;transition:all .2s ease-out}
+button.primary:hover{transform:translateY(-1px);box-shadow:0 2px 8px hsl(var(--n) / 0.12)}
+button.primary:active{transform:scale(.97)}
+
+button.danger{background:hsl(var(--er) / 0.15);color:hsl(var(--er));border:1px solid hsl(var(--er) / 0.4);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;transition:all .2s ease-out}
+button.danger:hover{background:hsl(var(--er) / 0.25);transform:translateY(-1px)}
+button.danger:active{transform:scale(.97)}
+
+button.ghost{background:hsl(var(--b1));color:hsl(var(--bc) / 0.7);border:1px solid hsl(var(--b3));padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;transition:all .2s ease-out}
+button.ghost:hover{background:hsl(var(--b3));color:hsl(var(--bc));transform:translateY(-1px)}
+button.ghost:active{transform:scale(.97)}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:9px 8px;text-align:left;border-bottom:1px solid hsl(var(--b3));vertical-align:middle}
+th{color:hsl(var(--bc) / 0.55);font-weight:500;font-size:12px}
+
+.tag{display:inline-block;padding:2px 8px;background:hsl(var(--b3) / 0.6);color:hsl(var(--bc) / 0.8);border-radius:10px;font-size:11px;margin:2px 3px 2px 0}
+.tag.admin{background:hsl(var(--a) / 0.2);color:hsl(var(--a))}
+.muted{color:hsl(var(--bc) / 0.45);font-size:12px}
+
+.msg{padding:10px 14px;border-radius:8px;margin:10px 0;font-size:13px;display:none}
+.msg.ok{background:hsl(var(--su) / 0.18);color:hsl(var(--su))}
+.msg.err{background:hsl(var(--er) / 0.18);color:hsl(var(--er))}
+
+/* group editor */
+.editor h3{font-size:14px;color:hsl(var(--in));margin:10px 0 8px;font-weight:500}
+.face-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;max-height:700px;overflow-y:auto;padding:12px;background:hsl(var(--b1));border:1px solid hsl(var(--b3));border-radius:12px}
+/* face-item: square tile via aspect-ratio + background-image. No <img> tag,
+   so Tailwind preflight's img reset cannot interfere. */
+.face-item{position:relative;background-color:hsl(var(--b2));background-size:cover;background-position:center;
+  border:2px solid transparent;border-radius:12px;cursor:pointer;overflow:hidden;
+  transition:transform .2s, border-color .2s;aspect-ratio:1}
+.face-item:hover{transform:translateY(-2px)}
+.face-item.on{border-color:hsl(var(--p))}
+/* Hide any stray <img> (legacy markup) — we use background-image now */
+.face-item > img{display:none !important}
+.face-item .meta{position:absolute;left:0;right:0;bottom:0;padding:20px 8px 8px;
+  font-size:12px;color:#fff;line-height:1.3;
+  background:linear-gradient(to top, hsl(0 0% 0% / 0.6), hsl(0 0% 0% / 0))}
+.face-item .meta .n{color:#fff;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;text-shadow:0 1px 2px hsl(0 0% 0% / 0.5)}
+.face-item .meta span:not(.n){color:hsl(0 0% 100% / 0.85) !important;text-shadow:0 1px 2px hsl(0 0% 0% / 0.5)}
+.face-item.on::after{content:"✓";position:absolute;top:6px;right:6px;background:hsl(var(--p));color:hsl(var(--pc));width:22px;height:22px;border-radius:50%;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;z-index:2;box-shadow:0 1px 4px hsl(0 0% 0% / 0.25)}
+
+.path-list{max-height:240px;overflow-y:auto;background:hsl(var(--b1));border:1px solid hsl(var(--b3));border-radius:8px;padding:6px}
+.path-row{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;transition:background .15s}
+.path-row:hover{background:hsl(var(--b2))}
+.path-row label{cursor:pointer;flex:1;font-size:12px;color:hsl(var(--bc));word-break:break-all}
+.path-row .c{color:hsl(var(--bc) / 0.45);font-size:11px}
+
+.checkbox-row{display:flex;gap:14px;flex-wrap:wrap;background:hsl(var(--b1));border:1px solid hsl(var(--b3));border-radius:8px;padding:8px 10px}
+.checkbox-row label{font-size:13px;color:hsl(var(--bc));cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+input[type=checkbox]{accent-color:hsl(var(--p))}
+
+.section-label{font-size:12px;color:hsl(var(--bc) / 0.55);margin:14px 0 6px}
+.actions-bar{display:flex;gap:8px;margin-top:12px;justify-content:flex-end}
+.group-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.group-header h2{font-size:16px;color:hsl(var(--p));font-weight:500}
+.summary{color:hsl(var(--bc) / 0.55);font-size:12px;margin-bottom:8px}
+
+/* relationship graph editor */
+.rel-layout{display:grid;grid-template-columns:240px 1fr;gap:12px;height:600px}
+.rel-sidebar{background:hsl(var(--b2));border:1px solid hsl(var(--b3));border-radius:12px;padding:10px;overflow-y:auto}
+.rel-sidebar h4{font-size:13px;color:hsl(var(--in));margin-bottom:8px;font-weight:500}
+.rel-face{display:flex;gap:8px;align-items:center;padding:6px;border-radius:8px;cursor:pointer;margin-bottom:4px;transition:background .15s}
+.rel-face:hover{background:hsl(var(--b3))}
+.rel-face.in-graph{opacity:.35;cursor:default}
+.rel-face img{width:36px;height:36px !important;border-radius:50%;object-fit:cover;background:hsl(var(--b3));flex-shrink:0}
+.rel-face .n{font-size:12px;color:hsl(var(--bc));line-height:1.2;flex:1}
+.rel-face .n .fid{color:hsl(var(--bc) / 0.45);font-size:10px;font-family:monospace;display:block}
+
+.rel-canvas{background:hsl(var(--b1));border:1px solid hsl(var(--b3));border-radius:12px;position:relative}
+#cy{width:100%;height:100%}
+.rel-toolbar{position:absolute;top:8px;left:8px;display:flex;gap:6px;z-index:10}
+.rel-toolbar .hint{position:absolute;bottom:8px;left:8px;background:hsl(var(--n) / 0.6);padding:6px 10px;border-radius:8px;color:hsl(var(--nc));font-size:12px;pointer-events:none}
+
+.rel-dialog{position:fixed;inset:0;background:hsl(var(--n) / 0.55);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;z-index:100}
+.rel-dialog.active{display:flex;animation:adminModalFade .2s ease-out}
+@keyframes adminModalFade{from{opacity:0}to{opacity:1}}
+.rel-dialog .box{background:hsl(var(--b1));border:1px solid hsl(var(--b3));border-radius:14px;padding:18px;width:min(420px,92vw);box-shadow:0 12px 32px hsl(var(--n) / 0.2);animation:adminModalScale .2s ease-out}
+@keyframes adminModalScale{from{transform:scale(.95);opacity:0}to{transform:scale(1);opacity:1}}
+.rel-dialog .box h3{color:hsl(var(--p));font-size:15px;margin-bottom:12px;font-weight:500}
+.rel-dialog .row{margin-bottom:10px}
+.rel-dialog .row label{display:block;font-size:12px;color:hsl(var(--bc) / 0.55);margin-bottom:4px}
+.rel-dialog .row select,.rel-dialog .row input{width:100%}
+.rel-dialog .footer{display:flex;justify-content:space-between;margin-top:14px}
+.adding-edge #cy{cursor:crosshair}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+</head><body>
+<div class="admin-header">
+  <div class="userbar">
+    <div><i data-lucide="user"></i> <span class="who">__USER__</span> <span style="color:hsl(var(--bc) / 0.4);font-size:12px">(admin)</span></div>
+    <div>
+      <a href="/"><i data-lucide="arrow-left"></i> 回相簿</a>
+      <button onclick="logout()"><i data-lucide="log-out"></i> 登出</button>
+    </div>
+  </div>
+  <h1>管理</h1>
+  <div class="msg" id="msg"></div>
+</div>
+
+<div class="tabs">
+  <button class="active" data-tab="users" onclick="switchTab('users')"><i data-lucide="users"></i> 使用者</button>
+  <button data-tab="groups" onclick="switchTab('groups')"><i data-lucide="users-round"></i> 群組</button>
+  <button data-tab="rels" onclick="switchTab('rels')"><i data-lucide="git-fork"></i> 關係圖</button>
+</div>
+
+<!-- USERS -->
+<div class="panel active" id="panel-users">
+  <div class="card">
+    <h3 style="font-size:14px;color:#9cf;margin-bottom:10px">新增使用者</h3>
+    <div class="row">
+      <input id="nu-name" type="text" placeholder="使用者名稱" autocomplete="off">
+      <input id="nu-pw" type="password" placeholder="密碼" autocomplete="new-password">
+      <label>權限 <select id="nu-role">
+        <option value="viewer">viewer</option>
+        <option value="admin">admin</option>
+      </select></label>
+      <button class="primary" onclick="createUser()">新增</button>
+    </div>
+    <div class="section-label">身份（這個使用者本人是誰？本人照片會自動可見，且不受群組黑名單限制）</div>
+    <select id="nu-identity" style="min-width:240px"></select>
+    <div class="section-label">群組（viewer 才有意義；群組可多個使用者共用）</div>
+    <div class="checkbox-row" id="nu-groups"></div>
+  </div>
+
+  <div class="card">
+    <table id="users-table"><thead>
+      <tr><th>名稱</th><th>權限</th><th>身份</th><th>群組</th><th style="text-align:right">動作</th></tr>
+    </thead><tbody></tbody></table>
+  </div>
+</div>
+
+<!-- RELATIONSHIPS -->
+<div class="panel" id="panel-rels">
+  <div class="card" style="margin-bottom:10px">
+    <div class="row" style="justify-content:space-between">
+      <div style="color:hsl(var(--bc) / 0.7);font-size:13px;line-height:1.55">
+        從左側拖人臉縮圖到 canvas 加節點；按
+        <span style="color:hsl(var(--p));font-weight:600">加邊</span>
+        進入連線模式（點兩個節點建立關係）。點 edge 編輯，按 <kbd>Delete</kbd> 刪除選取。
+        儲存後系統會自動為「家人」關係產生稱呼 alias。
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="rel-save-status" style="font-size:12px;color:hsl(var(--bc) / 0.45);margin-right:4px">—</span>
+        <button class="ghost" onclick="relAddEdgeMode()"><i data-lucide="plus"></i> 加邊</button>
+        <button class="ghost" onclick="relAutoLayout()"><i data-lucide="rotate-cw"></i> 重排</button>
+        <button class="ghost" onclick="relSave()" title="立即儲存（平常會自動存）"><i data-lucide="check"></i> 儲存</button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="rel-layout">
+      <div class="rel-sidebar">
+        <h4>人臉群組（拖入畫布）</h4>
+        <input type="text" id="rel-search" placeholder="搜尋..." oninput="renderRelSidebar()"
+               style="width:100%;margin-bottom:8px">
+        <div id="rel-face-list"></div>
+      </div>
+      <div class="rel-canvas" id="rel-canvas-wrap">
+        <div class="rel-toolbar" id="rel-toolbar"></div>
+        <div id="cy"></div>
+        <div class="hint" id="rel-hint" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Edge editor dialog -->
+<div class="rel-dialog" id="rel-edge-dialog">
+  <div class="box">
+    <h3 id="rel-edge-title">編輯關係</h3>
+    <div class="row">
+      <label id="rel-edge-type-label">關係類型</label>
+      <select id="rel-edge-type" onchange="relUpdatePlaceholders()"></select>
+    </div>
+    <div class="row">
+      <label id="rel-edge-alias-from-label">覆寫稱呼</label>
+      <input type="text" id="rel-edge-alias-from">
+    </div>
+    <div class="row">
+      <label id="rel-edge-alias-to-label">覆寫稱呼</label>
+      <input type="text" id="rel-edge-alias-to">
+    </div>
+    <div class="footer">
+      <button class="danger" onclick="relEdgeDelete()">刪除</button>
+      <div>
+        <button class="ghost" onclick="relEdgeCancel()">取消</button>
+        <button class="primary" onclick="relEdgeSave()">確定</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GROUPS -->
+<div class="panel" id="panel-groups">
+  <div class="card">
+    <h3 style="font-size:14px;color:#9cf;margin-bottom:10px">新增群組</h3>
+    <div class="row">
+      <input id="ng-name" type="text" placeholder="群組名稱（如 family）" autocomplete="off">
+      <button class="primary" onclick="createGroup()">新增</button>
+    </div>
+  </div>
+  <div id="groups-list"></div>
+</div>
+
+<script>
+let USERS=[], GROUPS=[], FACES=[], PETS=[], PATHS=[];
+const $ = (id) => document.getElementById(id);
+
+function showMsg(text, ok){
+  const m = $('msg');
+  m.textContent = text;
+  m.className = 'msg ' + (ok ? 'ok' : 'err');
+  m.style.display = 'block';
+  setTimeout(()=>{ m.style.display='none'; }, 3500);
+}
+function api(method, url, body){
+  const opts = {method, headers:{'Content-Type':'application/json'}};
+  if(body!==undefined) opts.body = JSON.stringify(body);
+  return fetch(url, opts).then(r=>r.json());
+}
+function logout(){ fetch('/api/logout',{method:'POST'}).then(()=>location.href='/login'); }
+
+function switchTab(t){
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===t));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active', p.id==='panel-'+t));
+  if(t==='groups'){ renderGroups(); }
+  if(t==='rels'){ relInit(); }
+}
+
+// ---- USERS ----
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]); }
+
+function renderGroupCheckboxes(container, selected){
+  const sel = new Set(selected||[]);
+  container.innerHTML = GROUPS.length
+    ? GROUPS.map(g=>`<label><input type="checkbox" value="${escapeHtml(g.name)}" ${sel.has(g.name)?'checked':''}>${escapeHtml(g.name)}</label>`).join('')
+    : '<span class="muted">（尚未建立群組，先到「群組」分頁新增）</span>';
+}
+
+function renderIdentityOptions(sel, selected){
+  // 訪客 + 所有命名的 face cluster
+  const cur = selected || '';
+  sel.innerHTML = '<option value="">訪客（無預設可見照片）</option>'
+    + FACES.map(f=>`<option value="${escapeHtml(f.id)}" ${cur===f.id?'selected':''}>${escapeHtml(f.name)} · ${f.count} 張</option>`).join('');
+}
+
+function identityLabel(fid){
+  if(!fid) return '<span class="muted">訪客</span>';
+  const f = FACES.find(x=>x.id===fid);
+  return f ? `<span class="tag">${escapeHtml(f.name)}</span>` : `<span class="tag muted">${escapeHtml(fid)}（已失效）</span>`;
+}
+
+function renderUsers(){
+  const tb = document.querySelector('#users-table tbody');
+  tb.innerHTML = USERS.map(u=>{
+    const isAdmin = u.role==='admin';
+    const groupTags = (u.groups||[]).map(g=>`<span class="tag">${escapeHtml(g)}</span>`).join('') || '<span class="muted">—</span>';
+    return `<tr data-name="${escapeHtml(u.username)}">
+      <td><b>${escapeHtml(u.username)}</b></td>
+      <td><span class="tag ${isAdmin?'admin':''}">${u.role}</span></td>
+      <td>${identityLabel(u.identity)}</td>
+      <td>${groupTags}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="ghost" onclick="editUser('${escapeHtml(u.username)}')">編輯</button>
+        <button class="danger" onclick="deleteUser('${escapeHtml(u.username)}')">刪除</button>
+      </td>
+    </tr>`;
+  }).join('');
+  renderGroupCheckboxes($('nu-groups'), []);
+  renderIdentityOptions($('nu-identity'), '');
+}
+
+function createUser(){
+  const username = $('nu-name').value.trim();
+  const password = $('nu-pw').value;
+  const role = $('nu-role').value;
+  const identity = $('nu-identity').value;
+  const groups = Array.from($('nu-groups').querySelectorAll('input:checked')).map(x=>x.value);
+  if(!username || !password){ showMsg('username 與密碼必填', false); return; }
+  api('POST','/api/admin/users',{username,password,role,identity,groups}).then(r=>{
+    if(r.ok){ showMsg('✓ 已新增 '+username, true); $('nu-name').value=''; $('nu-pw').value=''; loadAll(); }
+    else showMsg(r.error||'新增失敗', false);
+  });
+}
+
+function editUser(name){
+  const u = USERS.find(x=>x.username===name);
+  if(!u) return;
+  const tr = document.querySelector(`#users-table tr[data-name="${CSS.escape(name)}"]`);
+  const groupChecks = GROUPS.map(g=>`<label style="display:inline-flex;gap:3px;align-items:center;margin-right:10px;font-size:12px"><input type="checkbox" value="${escapeHtml(g.name)}" ${u.groups.includes(g.name)?'checked':''}>${escapeHtml(g.name)}</label>`).join('') || '<span class="muted">（無群組）</span>';
+  const idOpts = '<option value="">訪客（無預設可見照片）</option>'
+    + FACES.map(f=>`<option value="${escapeHtml(f.id)}" ${u.identity===f.id?'selected':''}>${escapeHtml(f.name)} · ${f.count} 張</option>`).join('');
+  tr.innerHTML = `<td colspan="5">
+    <div class="row" style="margin-bottom:8px">
+      <b>${escapeHtml(name)}</b>
+      <label>權限 <select id="ed-role-${escapeHtml(name)}">
+        <option value="viewer" ${u.role==='viewer'?'selected':''}>viewer</option>
+        <option value="admin" ${u.role==='admin'?'selected':''}>admin</option>
+      </select></label>
+      <input type="password" id="ed-pw-${escapeHtml(name)}" placeholder="新密碼（留空則不改）" autocomplete="new-password">
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <label>身份 <select id="ed-id-${escapeHtml(name)}" style="min-width:240px">${idOpts}</select></label>
+    </div>
+    <div style="margin-bottom:8px">${groupChecks}</div>
+    <div style="text-align:right">
+      <button class="ghost" onclick="loadUsers()">取消</button>
+      <button class="primary" onclick="saveUser('${escapeHtml(name)}')">儲存</button>
+    </div>
+  </td>`;
+}
+
+function saveUser(name){
+  const role = $('ed-role-'+name).value;
+  const identity = $('ed-id-'+name).value;
+  const pw = $('ed-pw-'+name).value;
+  const tr = document.querySelector(`#users-table tr[data-name="${CSS.escape(name)}"]`);
+  const groups = Array.from(tr.querySelectorAll('input[type=checkbox]:checked')).map(x=>x.value);
+  const body = {action:'update', role, identity, groups};
+  if(pw) body.password = pw;
+  api('POST','/api/admin/users/'+encodeURIComponent(name), body).then(r=>{
+    if(r.ok){ showMsg('✓ 已更新 '+name, true); loadUsers(); }
+    else showMsg(r.error||'儲存失敗', false);
+  });
+}
+
+function deleteUser(name){
+  if(!confirm('確定刪除使用者「'+name+'」？')) return;
+  api('POST','/api/admin/users/'+encodeURIComponent(name),{action:'delete'}).then(r=>{
+    if(r.ok){ showMsg('✓ 已刪除 '+name, true); loadUsers(); }
+    else showMsg(r.error||'刪除失敗', false);
+  });
+}
+
+// ---- GROUPS ----
+function renderGroups(){
+  const wrap = $('groups-list');
+  if(GROUPS.length===0){ wrap.innerHTML='<div class="card muted">尚未建立群組。</div>'; return; }
+  wrap.innerHTML = GROUPS.map(g=>{
+    const allowedFaces = new Set(g.allowed_faces||[]);
+    const allowedPets = new Set(g.allowed_pets||[]);
+    const blocked = new Set(g.blocked_paths||[]);
+    const faceGrid = FACES.map(f=>{
+      const on = allowedFaces.has(f.id);
+      const bg = `/thumb/${escapeHtml(f.id)}.jpg?v=${f.thumb_ver}`;
+      return `<div class="face-item ${on?'on':''}" data-fid="${escapeHtml(f.id)}" onclick="toggleFace(this)" style="background-image:url('${bg}')">
+        <div class="meta"><span class="n">${escapeHtml(f.name)}</span><span>${f.count}</span></div>
+      </div>`;
+    }).join('') || '<span class="muted">（尚無命名的人臉群組）</span>';
+    const petGrid = PETS.map(p=>{
+      const on = allowedPets.has(p.id);
+      const bg = `/pet_thumb/${escapeHtml(p.id)}.jpg?v=${p.thumb_ver}`;
+      return `<div class="face-item pet ${on?'on':''}" data-pid="${escapeHtml(p.id)}" onclick="togglePet(this)" style="background-image:url('${bg}')">
+        <div class="meta"><span class="n">${escapeHtml(p.name)}</span><span>${p.count}</span></div>
+      </div>`;
+    }).join('') || '<span class="muted">（尚無命名的寵物群組）</span>';
+    const pathRows = PATHS.map(p=>{
+      const id = 'p-'+g.name+'-'+btoa(unescape(encodeURIComponent(p.path))).replace(/=/g,'');
+      return `<div class="path-row">
+        <input type="checkbox" id="${id}" value="${escapeHtml(p.path)}" ${blocked.has(p.path)?'checked':''}>
+        <label for="${id}">${escapeHtml(p.path)}<span class="c"> · ${p.count} 張</span></label>
+      </div>`;
+    }).join('') || '<span class="muted">（沒有可選路徑）</span>';
+    return `<div class="card editor" data-group="${escapeHtml(g.name)}">
+      <div class="group-header">
+        <h2>${escapeHtml(g.name)}</h2>
+        <button class="danger" onclick="deleteGroup('${escapeHtml(g.name)}')">刪除群組</button>
+      </div>
+      <div class="summary">允許 <b>${g.allowed_faces.length}</b> 人臉 · <b>${(g.allowed_pets||[]).length}</b> 寵物 · 封鎖 <b>${g.blocked_paths.length}</b> 個路徑</div>
+
+      <h3>可看到的人臉群組（allowed_faces）</h3>
+      <div class="face-grid">${faceGrid}</div>
+
+      <h3>可看到的寵物群組（allowed_pets） <span style="font-weight:400;color:#888;font-size:11px">— 不選則所有寵物公開</span></h3>
+      <div class="face-grid">${petGrid}</div>
+
+      <h3>封鎖路徑前綴（blocked_paths）</h3>
+      <div class="path-list">${pathRows}</div>
+
+      <div class="actions-bar">
+        <button class="primary" onclick="saveGroup('${escapeHtml(g.name)}')">儲存</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleFace(el){ el.classList.toggle('on'); }
+function togglePet(el){ el.classList.toggle('on'); }
+
+function createGroup(){
+  const name = $('ng-name').value.trim();
+  if(!name){ showMsg('群組名稱必填', false); return; }
+  api('POST','/api/admin/groups/'+encodeURIComponent(name),
+    {action:'upsert',allowed_faces:[],allowed_pets:[],blocked_paths:[]}).then(r=>{
+    if(r.ok){ showMsg('✓ 已新增群組 '+name, true); $('ng-name').value=''; loadAll(); }
+    else showMsg(r.error||'新增失敗', false);
+  });
+}
+
+function saveGroup(name){
+  const card = document.querySelector(`.card[data-group="${CSS.escape(name)}"]`);
+  const allowed_faces = Array.from(card.querySelectorAll('.face-item:not(.pet).on')).map(x=>x.dataset.fid);
+  const allowed_pets  = Array.from(card.querySelectorAll('.face-item.pet.on')).map(x=>x.dataset.pid);
+  const blocked_paths = Array.from(card.querySelectorAll('.path-list input:checked')).map(x=>x.value);
+  api('POST','/api/admin/groups/'+encodeURIComponent(name),
+    {action:'upsert',allowed_faces,allowed_pets,blocked_paths}).then(r=>{
+    if(r.ok){ showMsg('✓ 已更新群組 '+name, true); loadAll(); }
+    else showMsg(r.error||'儲存失敗', false);
+  });
+}
+
+function deleteGroup(name){
+  if(!confirm('確定刪除群組「'+name+'」？\n所有使用者對這個群組的引用也會被移除。')) return;
+  api('POST','/api/admin/groups/'+encodeURIComponent(name),{action:'delete'}).then(r=>{
+    if(r.ok){ showMsg('✓ 已刪除群組 '+name, true); loadAll(); }
+    else showMsg(r.error||'刪除失敗', false);
+  });
+}
+
+// ---- RELATIONSHIP GRAPH ----
+let cy = null;
+let relGraph = {nodes:[], edges:[]};
+let relFamilyTypes = [];
+let relNonFamilyTypes = [];
+let relFamilyRules = {};          // {type: [forward, backward]} for placeholder hints
+let relAddEdgeFirstNode = null;   // when in add-edge mode, holds the first clicked node id
+let relEditingEdgeId = null;      // edge id currently in dialog
+let relPendingNewEdge = null;     // {source, target} captured before dialog opens
+let relDialogPair = null;         // {from, to} currently in dialog (for label rewriting)
+let relSaveTimer = null;          // debounced auto-save handle
+let relSaveLoaded = false;        // skip auto-save during initial load
+
+function relSetStatus(text, color){
+  const el = $('rel-save-status');
+  if(!el) return;
+  el.textContent = text;
+  el.style.color = color || '#666';
+}
+
+function relMarkDirty(){
+  if(!relSaveLoaded) return;          // 初始載入不算 dirty
+  clearTimeout(relSaveTimer);
+  relSetStatus('● 未儲存', '#ffb74d');
+  relSaveTimer = setTimeout(relSavePost, 800);
+}
+
+function relSavePost(){
+  relSetStatus('● 儲存中...', '#9cc');
+  api('POST', '/api/admin/relationship-graph', relGraph).then(r => {
+    if(r.ok){
+      const t = new Date();
+      const hh = String(t.getHours()).padStart(2,'0');
+      const mm = String(t.getMinutes()).padStart(2,'0');
+      const ss = String(t.getSeconds()).padStart(2,'0');
+      relSetStatus(`✓ 已儲存 ${hh}:${mm}:${ss}（${r.nodes}n / ${r.edges}e / ${r.aliases} aliases）`, '#81c784');
+    } else {
+      relSetStatus('✗ ' + (r.error || '儲存失敗'), '#ef5350');
+    }
+  }).catch(e => {
+    relSetStatus('✗ 儲存失敗: ' + (e.message || e), '#ef5350');
+  });
+}
+
+function faceById(fid){ return FACES.find(f=>f.id===fid); }
+
+function relInit(){
+  // load graph + types from backend; faces come from FACES (already loaded)
+  relSaveLoaded = false;
+  relSetStatus('載入中...', '#666');
+  fetch('/api/admin/relationship-graph').then(r=>r.json()).then(d=>{
+    relGraph = d.graph || {nodes:[], edges:[]};
+    if(!relGraph.positions) relGraph.positions = {};
+    relFamilyTypes = d.family_types || [];
+    relNonFamilyTypes = d.non_family_types || [];
+    relFamilyRules = d.family_rules || {};
+    renderRelSidebar();
+    relRenderCanvas();
+    relSaveLoaded = true;
+    relSetStatus('✓ 已就緒（變更會自動儲存）', '#81c784');
+  });
+}
+
+function renderRelSidebar(){
+  const q = ($('rel-search').value || '').toLowerCase();
+  const inGraph = new Set(relGraph.nodes);
+  const html = FACES
+    .filter(f => !q || (f.name||'').toLowerCase().includes(q) || f.id.includes(q))
+    .map(f => {
+      const cls = 'rel-face' + (inGraph.has(f.id)?' in-graph':'');
+      return `<div class="${cls}" data-fid="${escapeHtml(f.id)}"
+                onclick="relAddNode('${escapeHtml(f.id)}')">
+        <img src="/thumb/${escapeHtml(f.id)}.jpg?v=${f.thumb_ver}" loading="lazy">
+        <div class="n">${escapeHtml(f.name)}<span class="fid">${escapeHtml(f.id)}</span></div>
+      </div>`;
+    }).join('');
+  $('rel-face-list').innerHTML = html || '<div class="muted">（無命名的人臉群組）</div>';
+}
+
+function relAddNode(fid){
+  if(relGraph.nodes.includes(fid)) return;
+  relGraph.nodes.push(fid);
+  renderRelSidebar();
+  if(cy){
+    const f = faceById(fid);
+    // 放在目前 viewport 中央，讓使用者看得到；保留既有節點位置
+    const ext = cy.extent();
+    const cx = (ext.x1 + ext.x2) / 2;
+    const cy_ = (ext.y1 + ext.y2) / 2;
+    cy.add({group:'nodes',
+            data:{id:fid, label:f?f.name:fid, thumb:`/thumb/${fid}.jpg?v=${f?f.thumb_ver:0}`},
+            position:{x: cx, y: cy_}});
+    relGraph.positions[fid] = {x: cx, y: cy_};
+  }
+  relMarkDirty();
+}
+
+function relRemoveNode(fid){
+  relGraph.nodes = relGraph.nodes.filter(n=>n!==fid);
+  relGraph.edges = relGraph.edges.filter(e=>e.from!==fid && e.to!==fid);
+  if(relGraph.positions) delete relGraph.positions[fid];
+  renderRelSidebar();
+  if(cy){
+    cy.$('#'+CSS.escape(fid)).remove();
+  }
+  relMarkDirty();
+}
+
+function relRenderCanvas(){
+  // 1) snapshot 現在的位置（重畫前），merge 進 relGraph.positions
+  if(cy){
+    cy.nodes().forEach(n => {
+      relGraph.positions[n.id()] = {x: n.position('x'), y: n.position('y')};
+    });
+  }
+
+  // 2) 組 elements，已知位置的節點直接帶 position（cy 會跳過 layout）
+  const els = [];
+  const knownPositions = relGraph.positions || {};
+  const unknownNodes = [];
+  for(const fid of relGraph.nodes){
+    const f = faceById(fid);
+    const node = {group:'nodes', data:{id:fid, label:f?f.name:fid, thumb:`/thumb/${fid}.jpg?v=${f?f.thumb_ver:0}`}};
+    if(knownPositions[fid]){
+      node.position = {x: knownPositions[fid].x, y: knownPositions[fid].y};
+    } else {
+      unknownNodes.push(fid);
+    }
+    els.push(node);
+  }
+  relGraph.edges.forEach((e, i) => {
+    els.push({group:'edges', data:{
+      id:'e'+i, source:e.from, target:e.to, label:e.type,
+      family: relFamilyTypes.includes(e.type) ? '1' : '0',
+    }});
+  });
+
+  if(cy){ cy.destroy(); }
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements: els,
+    // Morandi palette mirrored as literal hex (Cytoscape renders to canvas
+     // pixels, can't resolve CSS variables).  Keep these in sync with
+     // _assets.html [data-theme="morandi"]:  --p #a8b5a2  --a #b8a6c9
+     // --wa #d4b483  --bc #5c5751  --b3 #d9d2c5  --b1 #f5f2ec
+    style: [
+      {selector:'node', style:{
+        'background-image':'data(thumb)',
+        'background-fit':'cover cover',
+        'background-color':'#ebe6dc',                       // --b2
+        'border-width':2, 'border-color':'#a8b5a2',         // --p sage
+        'label':'data(label)', 'color':'#5c5751',           // --bc text
+        'font-size':11, 'text-valign':'bottom', 'text-margin-y':6,
+        'text-outline-width':2, 'text-outline-color':'#f5f2ec', // --b1 outline
+        'width':60, 'height':60, 'shape':'ellipse',
+      }},
+      {selector:'node:selected', style:{'border-color':'#d4b483', 'border-width':4}},  // --wa ochre
+      {selector:'edge', style:{
+        'width':2, 'line-color':'#a89a8c', 'curve-style':'bezier',
+        'target-arrow-shape':'triangle', 'target-arrow-color':'#a89a8c',
+        'label':'data(label)', 'color':'#5c5751', 'font-size':10,
+        'text-rotation':'autorotate', 'text-margin-y':-8,
+        'text-outline-width':2, 'text-outline-color':'#f5f2ec',
+      }},
+      {selector:'edge[family = "1"]', style:{'line-color':'#a8b5a2', 'target-arrow-color':'#a8b5a2', 'color':'#5c5751'}}, // family edge: sage
+      {selector:'edge:selected', style:{'line-color':'#d4b483', 'target-arrow-color':'#d4b483', 'width':3}},               // ochre highlight
+    ],
+    // preset：尊重已知 position，不亂搬；新節點若沒位置會疊在 (0,0)，user 拖開即可
+    layout:{name:'preset', fit: unknownNodes.length === relGraph.nodes.length},
+  });
+
+  // 只在「所有節點都沒位置」時自動 cose 一次，讓初次體驗不要全擠原點
+  if(unknownNodes.length === relGraph.nodes.length && relGraph.nodes.length > 0){
+    cy.layout({name:'cose', animate:false, idealEdgeLength:120, nodeRepulsion:8000}).run();
+    // 把 cose 算出的位置寫回 relGraph.positions
+    cy.nodes().forEach(n => {
+      relGraph.positions[n.id()] = {x: n.position('x'), y: n.position('y')};
+    });
+  } else if(unknownNodes.length > 0){
+    // 部分新節點沒位置 → 都放 viewport 中央
+    const ext = cy.extent();
+    const cx = (ext.x1 + ext.x2) / 2;
+    const cy_center = (ext.y1 + ext.y2) / 2;
+    unknownNodes.forEach((fid, i) => {
+      const p = {x: cx + i * 30, y: cy_center + i * 30};
+      cy.$('#' + CSS.escape(fid)).position(p);
+      relGraph.positions[fid] = p;
+    });
+  }
+
+  // 拖動結束 → 即時更新 positions + debounced auto-save
+  cy.on('dragfree', 'node', evt => {
+    const n = evt.target;
+    relGraph.positions[n.id()] = {x: n.position('x'), y: n.position('y')};
+    relMarkDirty();
+  });
+
+  cy.on('tap', 'node', evt => {
+    if(relAddEdgeFirstNode === null) return;       // 非加邊模式 → 不做事
+    const id = evt.target.id();
+    if(relAddEdgeFirstNode === ''){                // 第一次點
+      relAddEdgeFirstNode = id;
+      cy.$('#'+CSS.escape(id)).addClass('source-pick');
+      relHint(`從 <b>${faceLabel(id)}</b> 出發，再點目標節點`);
+    } else if(relAddEdgeFirstNode !== id){         // 第二次點
+      relPendingNewEdge = {source: relAddEdgeFirstNode, target: id};
+      relAddEdgeFirstNode = null;
+      document.body.classList.remove('adding-edge');
+      relHint('');
+      relOpenEdgeDialog(null);   // null = new edge
+    }
+  });
+
+  cy.on('tap', 'edge', evt => {
+    if(relAddEdgeFirstNode !== null) return;
+    const eid = evt.target.id();
+    const idx = parseInt(eid.slice(1));            // 'eNN' → NN
+    relEditingEdgeId = idx;
+    relOpenEdgeDialog(relGraph.edges[idx]);
+  });
+
+  cy.on('tap', evt => {
+    if(evt.target === cy && relAddEdgeFirstNode !== null){
+      // 點到空白 → 取消加邊模式
+      relAddEdgeFirstNode = null;
+      document.body.classList.remove('adding-edge');
+      relHint('');
+    }
+  });
+
+  // Delete key removes selected node or edge
+  document.addEventListener('keydown', relKeydownHandler);
+}
+
+function relKeydownHandler(e){
+  if(e.key !== 'Delete' && e.key !== 'Backspace') return;
+  if(document.activeElement && ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
+  if(!cy) return;
+  const sel = cy.$(':selected');
+  if(sel.length === 0) return;
+  sel.forEach(el => {
+    if(el.isNode()){
+      if(confirm(`刪除節點「${faceLabel(el.id())}」？所有相關連線也會被移除。`)){
+        relRemoveNode(el.id());
+      }
+    } else if(el.isEdge()){
+      const idx = parseInt(el.id().slice(1));
+      relGraph.edges.splice(idx, 1);
+      relRenderCanvas();
+      relMarkDirty();
+    }
+  });
+}
+
+function faceLabel(fid){
+  const f = faceById(fid);
+  return f ? f.name : fid;
+}
+
+function relHint(html){
+  const h = $('rel-hint');
+  if(!html){ h.style.display='none'; return; }
+  h.innerHTML = html;
+  h.style.display = 'block';
+}
+
+function relAddEdgeMode(){
+  if(relGraph.nodes.length < 2){ showMsg('請先加 2 個節點再連線', false); return; }
+  relAddEdgeFirstNode = '';
+  document.body.classList.add('adding-edge');
+  relHint('連線模式：先點起始節點，再點目標節點。點空白處取消');
+}
+
+function relAutoLayout(){
+  if(!cy) return;
+  cy.layout({name:'cose', animate:true, idealEdgeLength:120, nodeRepulsion:8000}).run();
+}
+
+function relOpenEdgeDialog(edge){
+  const sel = $('rel-edge-type');
+  // 填類型下拉
+  const allTypes = [...relFamilyTypes, ...relNonFamilyTypes];
+  sel.innerHTML = allTypes.map(t => {
+    const fam = relFamilyTypes.includes(t);
+    return `<option value="${escapeHtml(t)}">${escapeHtml(t)}${fam?' (家人)':''}</option>`;
+  }).join('') + '<option value="__custom__">自訂...</option>';
+  let title, fromFid, toFid;
+  if(edge){
+    sel.value = relFamilyTypes.includes(edge.type) || relNonFamilyTypes.includes(edge.type) ? edge.type : '__custom__';
+    fromFid = edge.from; toFid = edge.to;
+    title = `編輯：${faceLabel(fromFid)} → ${faceLabel(toFid)}`;
+    $('rel-edge-alias-from').value = edge.alias_from || '';
+    $('rel-edge-alias-to').value = edge.alias_to || '';
+  } else if(relPendingNewEdge){
+    sel.value = relFamilyTypes[0] || '__custom__';
+    fromFid = relPendingNewEdge.source; toFid = relPendingNewEdge.target;
+    title = `新增:${faceLabel(fromFid)} → ${faceLabel(toFid)}`;
+    $('rel-edge-alias-from').value = '';
+    $('rel-edge-alias-to').value = '';
+  }
+  $('rel-edge-title').textContent = title;
+
+  // 用實際名字改寫 label 跟 placeholder，避免 from/to 抽象易錯
+  const fromName = faceLabel(fromFid);
+  const toName = faceLabel(toFid);
+  $('rel-edge-type-label').textContent = `關係類型（${fromName} 是 ${toName} 的 ___）`;
+  $('rel-edge-alias-from-label').textContent = `${fromName} 怎麼稱呼 ${toName}（覆寫；留空用預設）`;
+  $('rel-edge-alias-to-label').textContent = `${toName} 怎麼稱呼 ${fromName}（覆寫；留空用預設）`;
+  relUpdatePlaceholders();
+  $('rel-edge-dialog').classList.add('active');
+}
+
+function relUpdatePlaceholders(){
+  // 依目前選擇的類型，顯示預設稱呼當 placeholder
+  const typ = $('rel-edge-type').value;
+  const rule = relFamilyRules[typ];
+  if(rule){
+    // rule = [forward, backward]
+    // forward = from 從 to 視角看到的稱呼 → alias_to
+    // backward = to 從 from 視角看到的稱呼 → alias_from
+    $('rel-edge-alias-from').placeholder = '預設：' + rule[1];
+    $('rel-edge-alias-to').placeholder = '預設：' + rule[0];
+  } else {
+    $('rel-edge-alias-from').placeholder = '（非家人類型不會自動產生 alias）';
+    $('rel-edge-alias-to').placeholder = '（非家人類型不會自動產生 alias）';
+  }
+}
+
+function relEdgeSave(){
+  let typ = $('rel-edge-type').value;
+  if(typ === '__custom__'){
+    typ = prompt('自訂類型名稱：');
+    if(!typ) return;
+    typ = typ.trim();
+    if(!typ) return;
+  }
+  const af = $('rel-edge-alias-from').value.trim();
+  const at = $('rel-edge-alias-to').value.trim();
+  if(relEditingEdgeId !== null){
+    const e = relGraph.edges[relEditingEdgeId];
+    e.type = typ;
+    if(af) e.alias_from = af; else delete e.alias_from;
+    if(at) e.alias_to = at; else delete e.alias_to;
+  } else if(relPendingNewEdge){
+    const e = {from: relPendingNewEdge.source, to: relPendingNewEdge.target, type: typ};
+    if(af) e.alias_from = af;
+    if(at) e.alias_to = at;
+    relGraph.edges.push(e);
+  }
+  relEditingEdgeId = null;
+  relPendingNewEdge = null;
+  $('rel-edge-dialog').classList.remove('active');
+  relRenderCanvas();
+  relMarkDirty();
+}
+
+function relEdgeDelete(){
+  if(relEditingEdgeId === null){
+    $('rel-edge-dialog').classList.remove('active');
+    return;
+  }
+  relGraph.edges.splice(relEditingEdgeId, 1);
+  relEditingEdgeId = null;
+  $('rel-edge-dialog').classList.remove('active');
+  relRenderCanvas();
+  relMarkDirty();
+}
+
+function relEdgeCancel(){
+  relEditingEdgeId = null;
+  relPendingNewEdge = null;
+  $('rel-edge-dialog').classList.remove('active');
+}
+
+function relSave(){
+  // 立即 flush（取消 debounce）
+  clearTimeout(relSaveTimer);
+  relSavePost();
+}
+
+// ---- bootstrap ----
+function loadUsers(){
+  return fetch('/api/admin/users').then(r=>r.json()).then(d=>{ USERS=d; renderUsers(); });
+}
+function loadAll(){
+  return Promise.all([
+    fetch('/api/admin/users').then(r=>r.json()),
+    fetch('/api/admin/groups').then(r=>r.json()),
+    fetch('/api/admin/faces').then(r=>r.json()),
+    fetch('/api/admin/paths').then(r=>r.json()),
+    fetch('/api/admin/pets').then(r=>r.json()).catch(()=>[]),
+  ]).then(([u,g,f,p,pets])=>{
+    USERS=u; GROUPS=g; FACES=f; PATHS=p; PETS=pets||[];
+    renderUsers();
+    if(document.querySelector('.tabs button.active').dataset.tab==='groups') renderGroups();
+  });
+}
+loadAll();
+</script>
+</body></html>
