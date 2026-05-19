@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html data-theme="morandi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>時間線 · Local Album</title>
+<!--V05_ASSETS-->
+<style>
+/* v0.6 P3: Timeline — vertical event list, each event = covered card.
+   Reuses Morandi tokens + iOS 26 aesthetic. */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:hsl(var(--b1))}
+body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,"Inter","Helvetica Neue",sans-serif;
+  color:hsl(var(--bc));padding:24px 28px 80px;line-height:1.5;
+  max-width:1100px !important;margin:0 auto !important;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;letter-spacing:-0.005em}
+@media (max-width:768px){ body{padding:16px 12px 80px} }
+
+[data-lucide]{display:block;width:1em;height:1em;stroke-width:1.75;flex-shrink:0}
+
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:12px;flex-wrap:wrap;line-height:1}
+.topbar .left{display:flex;align-items:center;gap:10px}
+.topbar a{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 14px;
+  background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:999px;font-size:13px;cursor:pointer;
+  text-decoration:none;transition:all .2s ease-out;line-height:1}
+.topbar a:hover{background:hsl(var(--b3));transform:translateY(-1px);box-shadow:0 2px 8px hsl(var(--n) / 0.06)}
+.topbar a [data-lucide]{width:16px;height:16px}
+h1{font-size:28px;margin:0;font-weight:600;letter-spacing:-0.02em;color:hsl(var(--bc));display:flex;align-items:center;gap:10px}
+h1 [data-lucide]{width:24px;height:24px;color:hsl(var(--p))}
+.counter{color:hsl(var(--bc) / 0.55);font-size:13px}
+
+/* Year separator (sticky to viewport top) */
+.year-sep{position:sticky;top:0;z-index:10;
+  background:hsl(var(--b1) / 0.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  padding:14px 0 10px;margin:18px 0 12px;
+  font-size:22px;font-weight:600;color:hsl(var(--bc));letter-spacing:-0.02em}
+.year-sep:first-child{margin-top:0}
+
+/* Event card */
+.event{display:grid;grid-template-columns:160px 1fr;gap:16px;
+  background:hsl(var(--b2));border-radius:16px;padding:14px;margin-bottom:14px;
+  cursor:pointer;transition:transform .2s ease-out, box-shadow .2s, background .2s}
+.event:hover{transform:translateY(-2px);background:hsl(var(--b3) / 0.7);box-shadow:0 4px 14px hsl(var(--n) / 0.08)}
+.event:active{transform:scale(.99)}
+.event .cover{aspect-ratio:1;border-radius:12px;overflow:hidden;background:hsl(var(--b3));
+  background-size:cover;background-position:center;flex-shrink:0}
+.event .meta{display:flex;flex-direction:column;gap:6px;min-width:0;justify-content:center}
+.event .date-range{font-size:15px;font-weight:600;color:hsl(var(--bc));letter-spacing:-0.01em}
+.event .dur{font-size:12px;color:hsl(var(--bc) / 0.55);font-weight:400;margin-left:6px}
+.event .places{display:flex;align-items:center;gap:6px;font-size:13px;color:hsl(var(--bc) / 0.75)}
+.event .places [data-lucide]{width:13px;height:13px;color:hsl(var(--bc) / 0.5)}
+.event .footer{display:flex;align-items:center;gap:12px;margin-top:4px}
+.event .faces{display:flex;gap:-6px;align-items:center}
+.event .faces .face{width:28px;height:28px;border-radius:50%;background:hsl(var(--b3));
+  background-size:cover;background-position:center;border:2px solid hsl(var(--b2));
+  margin-left:-8px;flex-shrink:0;box-shadow:0 1px 3px hsl(var(--n) / 0.1)}
+.event .faces .face:first-child{margin-left:0}
+.event .photo-count{font-size:12px;color:hsl(var(--bc) / 0.55);margin-left:auto}
+
+@media (max-width:600px){
+  .event{grid-template-columns:110px 1fr;gap:12px;padding:10px}
+  .event .date-range{font-size:14px}
+}
+
+/* Expand modal */
+.modal{position:fixed;inset:0;background:hsl(var(--n) / 0.40);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);z-index:100;
+  display:flex;align-items:flex-start;justify-content:center;padding:24px 0;
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .22s ease-out, visibility 0s linear .22s}
+.modal.active{opacity:1;visibility:visible;pointer-events:auto;transition:opacity .22s ease-out, visibility 0s linear 0s}
+.modal-box{background:hsl(var(--b1));border:none;border-radius:24px;
+  width:min(1200px,95vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column;
+  box-shadow:0 24px 64px hsl(var(--n) / 0.20), 0 8px 24px hsl(var(--n) / 0.08);
+  transform:scale(.96);transition:transform .22s cubic-bezier(0.2, 0.9, 0.3, 1.1)}
+.modal.active .modal-box{transform:scale(1)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;padding:18px 24px;
+  border-bottom:1px solid hsl(var(--b3) / 0.5);flex-shrink:0;gap:12px}
+.modal-header h2{font-size:18px;font-weight:600;color:hsl(var(--bc));letter-spacing:-0.015em}
+.modal-header .sub{font-size:13px;color:hsl(var(--bc) / 0.55);font-weight:400;margin-top:2px}
+.modal-header .close{display:inline-flex;align-items:center;justify-content:center;
+  background:hsl(var(--b2));color:hsl(var(--bc) / 0.7);border:none;width:36px;height:36px;border-radius:50%;
+  cursor:pointer;transition:all .2s ease-out}
+.modal-header .close:hover{background:hsl(var(--b3));color:hsl(var(--bc))}
+.modal-header .close [data-lucide]{width:18px;height:18px}
+.modal-body{padding:18px 24px 24px;overflow-y:auto;flex:1}
+.modal-grid{display:grid;gap:4px;
+  grid-template-columns:repeat(3,1fr)}
+@media (min-width:600px){ .modal-grid{grid-template-columns:repeat(4,1fr)} }
+@media (min-width:1000px){ .modal-grid{grid-template-columns:repeat(6,1fr); gap:5px} }
+.modal-grid a{position:relative;display:block;aspect-ratio:1;overflow:hidden;border-radius:8px;
+  background:hsl(var(--b2));cursor:pointer;transition:transform .2s, box-shadow .2s}
+.modal-grid a:hover{transform:scale(1.02);box-shadow:0 4px 14px hsl(var(--n) / 0.12);z-index:1}
+.modal-grid img{position:absolute;inset:0;width:100% !important;height:100% !important;object-fit:cover;display:block}
+
+.empty-state{text-align:center;padding:80px 20px;color:hsl(var(--bc) / 0.55)}
+.empty-state h2{font-size:18px;font-weight:500;margin-bottom:8px;color:hsl(var(--bc))}
+.empty-state code{display:inline-block;background:hsl(var(--b2));padding:6px 10px;border-radius:8px;
+  font-family:"SF Mono",ui-monospace,monospace;font-size:12px;margin-top:8px;color:hsl(var(--bc))}
+.spinner{text-align:center;padding:60px;color:hsl(var(--bc) / 0.5);font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="left">
+    <a href="/" title="回相簿"><i data-lucide="arrow-left"></i> 回相簿</a>
+    <h1><i data-lucide="clock"></i> 時間線</h1>
+  </div>
+  <div class="counter" id="counter"></div>
+</div>
+
+<div id="root">
+  <div class="spinner">載入中…</div>
+</div>
+
+<!-- Event detail modal -->
+<div class="modal" id="evtModal" onclick="if(event.target===this)closeModal()">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div>
+        <h2 id="modalTitle"></h2>
+        <div class="sub" id="modalSub"></div>
+      </div>
+      <button class="close" onclick="closeModal()" title="關閉"><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+let EVENTS = [];
+
+async function load(){
+  let data;
+  try { data = await fetch('/api/timeline').then(r => r.json()); }
+  catch (e) { return showError('無法載入時間線：' + e); }
+  if (data.error) return showError(data.error, data.hint);
+  EVENTS = data.events || [];
+  document.getElementById('counter').textContent = `共 ${EVENTS.length} 個事件`;
+  if (!EVENTS.length) return showError('沒有符合條件的事件。', '事件需要至少 3 張照片、間隔 < 6 小時。');
+  render();
+}
+
+function render(){
+  const root = document.getElementById('root');
+  // group events by year for separators
+  let lastYear = null;
+  let html = '';
+  for (const e of EVENTS) {
+    const year = parseInt(e.start.slice(0,4));
+    if (year !== lastYear) {
+      html += `<div class="year-sep">${year}</div>`;
+      lastYear = year;
+    }
+    html += renderEvent(e);
+  }
+  root.innerHTML = html;
+  window.refreshIcons && window.refreshIcons();
+}
+
+function renderEvent(e){
+  const start = e.start.slice(0, 10);
+  const end = e.end.slice(0, 10);
+  const range = (start === end) ? formatDate(start) : `${formatDate(start)} – ${formatDate(end)}`;
+  const dur = e.duration_days > 1 ? `<span class="dur">${e.duration_days} 天</span>` : '';
+  const places = (e.top_places || []).slice(0,2).join(' · ');
+  const placesHtml = places
+    ? `<div class="places"><i data-lucide="map-pin"></i> ${escapeHtml(places)}</div>` : '';
+  const facesHtml = (e.top_faces || []).map(fid =>
+    `<div class="face" style="background-image:url('/thumb/${encodeURIComponent(fid)}.jpg')"></div>`
+  ).join('');
+  return `<div class="event" data-id="${e.id}" onclick="openEvent('${e.id}')">
+    <div class="cover" style="background-image:url('/img_thumb/${encodeURI(e.cover)}?w=400')"></div>
+    <div class="meta">
+      <div class="date-range">${escapeHtml(range)}${dur}</div>
+      ${placesHtml}
+      <div class="footer">
+        <div class="faces">${facesHtml}</div>
+        <div class="photo-count">${e.photo_count} 張</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function formatDate(s){
+  // "2024-05-14" → "2024 年 5 月 14 日"
+  const [y, m, d] = s.split('-').map(Number);
+  return `${y} 年 ${m} 月 ${d} 日`;
+}
+
+async function openEvent(id){
+  const modal = document.getElementById('evtModal');
+  document.getElementById('modalBody').innerHTML = '<div class="spinner">載入中…</div>';
+  document.getElementById('modalTitle').textContent = '';
+  document.getElementById('modalSub').textContent = '';
+  modal.classList.add('active');
+
+  const data = await fetch(`/api/timeline_event?id=${encodeURIComponent(id)}`).then(r=>r.json());
+  if (data.error) {
+    document.getElementById('modalBody').innerHTML = `<div class="empty-state">${escapeHtml(data.error)}</div>`;
+    return;
+  }
+  const startD = formatDate(data.start.slice(0,10));
+  const endD = formatDate(data.end.slice(0,10));
+  const title = startD === endD ? startD : `${startD} – ${endD}`;
+  const sub = [
+    `${data.duration_days} 天`,
+    `${data.photos.length} 張`,
+    ...(data.top_places || []),
+  ].filter(Boolean).join('  ·  ');
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalSub').textContent = sub;
+  document.getElementById('modalBody').innerHTML = `<div class="modal-grid">${
+    data.photos.map(p => {
+      const u = encodeURI(p.path);
+      return `<a href="/image/${u}" target="_blank" rel="noopener" title="${escapeAttr(p.time||'')}">
+        <img src="/img_thumb/${u}?w=400" loading="lazy" decoding="async"></a>`;
+    }).join('')
+  }</div>`;
+  window.refreshIcons && window.refreshIcons();
+}
+
+function closeModal(){ document.getElementById('evtModal').classList.remove('active'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+function showError(msg, hint){
+  document.getElementById('root').innerHTML = `<div class="empty-state">
+    <h2>${escapeHtml(msg)}</h2>
+    ${hint ? `<div style="margin-top:8px;font-size:13px">${escapeHtml(hint)}</div>${hint.includes('build') ? `<code>${escapeHtml(hint)}</code>` : ''}` : ''}
+  </div>`;
+}
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+function escapeAttr(s){ return escapeHtml(s); }
+
+load();
+</script>
+</body>
+</html>

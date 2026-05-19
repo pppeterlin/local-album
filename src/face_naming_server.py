@@ -22,20 +22,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _paths import PROJECT_ROOT as PROJECT_DIR, FACES_DIR, PETS_DIR, INDEX_DIR  # noqa: E402
 import _auth  # noqa: E402
 
-# In-memory cache of photo_index.json — used by /api/overview, /api/timeline,
-# /api/memories. Keyed by file mtime so edits via Photo_Index.py CLI hot-reload.
+# In-memory caches of derived JSON files (photo_index, timeline_events, memories).
+# Keyed by file mtime so edits via the Photo_Index CLI hot-reload without restart.
 _PHOTO_INDEX_CACHE: dict = {"mtime": 0.0, "data": None}
+_TIMELINE_CACHE:    dict = {"mtime": 0.0, "data": None}
+
+
+def _mtime_cached(path: Path, cache: dict):
+    if not path.exists():
+        return None
+    mtime = path.stat().st_mtime
+    if cache["mtime"] != mtime:
+        cache["data"] = json.loads(path.read_text(encoding="utf-8"))
+        cache["mtime"] = mtime
+    return cache["data"]
 
 
 def _load_photo_index():
-    idx_path = INDEX_DIR / "photo_index.json"
-    if not idx_path.exists():
-        return None
-    mtime = idx_path.stat().st_mtime
-    if _PHOTO_INDEX_CACHE["mtime"] != mtime:
-        _PHOTO_INDEX_CACHE["data"] = json.loads(idx_path.read_text(encoding="utf-8"))
-        _PHOTO_INDEX_CACHE["mtime"] = mtime
-    return _PHOTO_INDEX_CACHE["data"]
+    return _mtime_cached(INDEX_DIR / "photo_index.json", _PHOTO_INDEX_CACHE)
+
+
+def _load_timeline():
+    return _mtime_cached(INDEX_DIR / "timeline_events.json", _TIMELINE_CACHE)
 
 # Template directory (HTML extracted from this file in v0.5).
 # Read on every request — files are small, OS page cache handles it,
@@ -281,6 +289,16 @@ class Handler(SimpleHTTPRequestHandler):
 
         elif path == "/api/overview":
             self.json_response(self._build_overview_payload())
+
+        elif path in ("/timeline", "/timeline/"):
+            self.html(_load_template("timeline.html"))
+
+        elif path == "/api/timeline":
+            self.json_response(self._build_timeline_payload())
+
+        elif path == "/api/timeline_event":
+            eid = qs.get("id", [""])[0]
+            self.json_response(self._build_timeline_event_detail(eid))
 
         elif path == "/api/admin/users":
             if not self._require_admin(): return
@@ -843,6 +861,93 @@ class Handler(SimpleHTTPRequestHandler):
         # newest first
         photos.sort(key=lambda p: p["time"], reverse=True)
         return {"photos": photos, "total": len(photos)}
+
+    def _build_timeline_payload(self) -> dict:
+        """Viewer-filtered timeline events.
+
+        For each event, drop any photos the viewer can't see; if fewer than 3
+        survive, drop the entire event. Recompute top_faces / top_places /
+        cover from the filtered photo set so privacy is preserved end-to-end.
+        """
+        tl = _load_timeline()
+        if not tl:
+            return {
+                "error": "timeline not built",
+                "hint": "uv run python src/Photo_Index.py build-timeline",
+                "events": [],
+                "total": 0,
+            }
+        idx = _load_photo_index()
+        if not idx:
+            return {"error": "photo_index not built", "events": [], "total": 0}
+
+        perms = self._perms()
+        # Bulk-build path → face_ids map once; avoids per-photo overlay re-load
+        path_to_faces: Dict[str, List[str]] = {}
+        for p, info in idx.get("images", {}).items():
+            path_to_faces[p] = [f.get("face_id", "") for f in info.get("faces", []) if f.get("face_id")]
+
+        filtered_events = []
+        for evt in tl.get("events", []):
+            visible = [p for p in evt["photos"]
+                       if _auth.can_see_photo(perms, p, path_to_faces.get(p, []))]
+            if len(visible) < 3:
+                continue
+            # Recompute top_faces / top_places from visible photos only
+            face_counts: Dict[str, int] = {}
+            place_counts: Dict[str, int] = {}
+            for p in visible:
+                info = idx["images"].get(p, {})
+                for fid in path_to_faces.get(p, []):
+                    face_counts[fid] = face_counts.get(fid, 0) + 1
+                ln = info.get("location_name")
+                if ln:
+                    place_counts[ln] = place_counts.get(ln, 0) + 1
+            top_faces  = [k for k, _ in sorted(face_counts.items(),  key=lambda kv: -kv[1])[:3]]
+            top_places = [k for k, _ in sorted(place_counts.items(), key=lambda kv: -kv[1])[:3]]
+            # Cover: keep original if still visible; else middle of filtered list
+            cover = evt["cover"] if evt["cover"] in visible else visible[len(visible) // 2]
+            filtered_events.append({
+                "id": evt["id"],
+                "start": evt["start"],
+                "end": evt["end"],
+                "duration_days": evt["duration_days"],
+                "photo_count": len(visible),
+                "top_faces": top_faces,
+                "top_places": top_places,
+                "cover": cover,
+                # photos list is omitted from the listing payload to keep
+                # responses small; fetched lazily via /api/timeline?event=<id>
+            })
+
+        return {"events": filtered_events, "total": len(filtered_events)}
+
+    def _build_timeline_event_detail(self, event_id: str) -> dict:
+        """Full per-event photo list (viewer-filtered) for the expand modal."""
+        if not event_id:
+            return {"error": "missing id"}
+        tl = _load_timeline()
+        idx = _load_photo_index()
+        if not tl or not idx:
+            return {"error": "timeline or index not built"}
+        evt = next((e for e in tl.get("events", []) if e["id"] == event_id), None)
+        if not evt:
+            return {"error": "event not found"}
+        perms = self._perms()
+        visible = []
+        for p in evt["photos"]:
+            face_ids = [f.get("face_id", "") for f in idx["images"].get(p, {}).get("faces", []) if f.get("face_id")]
+            if _auth.can_see_photo(perms, p, face_ids):
+                info = idx["images"].get(p, {})
+                visible.append({"path": p, "time": info.get("time"), "location_name": info.get("location_name")})
+        return {
+            "id": evt["id"],
+            "start": evt["start"],
+            "end": evt["end"],
+            "duration_days": evt["duration_days"],
+            "top_places": evt["top_places"],
+            "photos": visible,
+        }
 
     # ---- admin: users / groups / visibility helpers ----
 

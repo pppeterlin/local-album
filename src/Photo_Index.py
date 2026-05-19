@@ -26,7 +26,7 @@ import logging
 import os
 import pickle
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set, Tuple
 
@@ -612,6 +612,132 @@ class PhotoIndex:
 
         return unnamed
 
+    # ------------------------------------------------------------------
+    # Timeline events (v0.6 P3)
+    # ------------------------------------------------------------------
+
+    def build_timeline_events(
+        self,
+        gap_hours: float = 6.0,
+        min_photos: int = 3,
+    ) -> Dict:
+        """
+        Aggregate photo_index into "event" clusters and write
+        ``index/timeline_events.json``.
+
+        Algorithm (sliding window over time):
+          1. Take every photo with a ``time`` field, sort ascending
+          2. Walk in order; whenever the gap between consecutive photos
+             exceeds ``gap_hours`` (default 6 h), start a new segment
+          3. Drop segments shorter than ``min_photos`` (default 3)
+          4. For each surviving segment compute:
+             - start / end timestamps + duration_days
+             - top 3 face_ids by appearance count
+             - top 3 place names (from location_name)
+             - cover photo (medoid heuristic: middle-time photo,
+               preferring one with at least one face)
+
+        The output is saved next to photo_index.json so the server can
+        serve /api/timeline without recomputing.
+        """
+        if not self.index:
+            from_disk = json.loads(self.index_path.read_text(encoding="utf-8")) if self.index_path.exists() else None
+            if not from_disk:
+                raise RuntimeError("photo_index not built; run `build` first")
+            self.index = from_disk
+
+        images = self.index.get("images", {})
+        # Sort all timed photos ascending; carry (path, dt, info) tuples for speed
+        timed: List[Tuple[str, datetime, Dict]] = []
+        for path, info in images.items():
+            t = info.get("time")
+            if not t: continue
+            try:
+                dt = datetime.strptime(t, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+            timed.append((path, dt, info))
+        timed.sort(key=lambda x: x[1])
+        LOGGER.info("Timeline source: %d timed photos", len(timed))
+
+        gap = timedelta(hours=gap_hours)
+        segments: List[List[Tuple[str, datetime, Dict]]] = []
+        current: List[Tuple[str, datetime, Dict]] = []
+        for entry in timed:
+            if current and (entry[1] - current[-1][1]) > gap:
+                if len(current) >= min_photos:
+                    segments.append(current)
+                current = []
+            current.append(entry)
+        if len(current) >= min_photos:
+            segments.append(current)
+        LOGGER.info("Aggregated into %d events (gap=%.1fh, min_photos=%d)",
+                    len(segments), gap_hours, min_photos)
+
+        events: List[Dict] = []
+        for seg in segments:
+            paths = [e[0] for e in seg]
+            start_dt, end_dt = seg[0][1], seg[-1][1]
+            duration_days = max(1, (end_dt.date() - start_dt.date()).days + 1)
+
+            # Top faces (count appearances; faces is overlay-resolved already)
+            face_counts: Dict[str, int] = {}
+            for _, _, info in seg:
+                for f in info.get("faces", []):
+                    fid = f.get("face_id")
+                    if fid:
+                        face_counts[fid] = face_counts.get(fid, 0) + 1
+            top_faces = [fid for fid, _ in
+                         sorted(face_counts.items(), key=lambda kv: -kv[1])[:3]]
+
+            # Top places — order by appearance count
+            place_counts: Dict[str, int] = {}
+            for _, _, info in seg:
+                name = info.get("location_name")
+                if name:
+                    place_counts[name] = place_counts.get(name, 0) + 1
+            top_places = [n for n, _ in
+                          sorted(place_counts.items(), key=lambda kv: -kv[1])[:3]]
+
+            # Cover heuristic: prefer middle-time photo with faces; fallback to plain middle
+            mid_idx = len(seg) // 2
+            cover = seg[mid_idx][0]
+            with_faces = [p for p, _, info in seg if info.get("faces")]
+            if with_faces:
+                # Pick the with-faces photo nearest the middle
+                mid_path = seg[mid_idx][0]
+                if mid_path in with_faces:
+                    cover = mid_path
+                else:
+                    cover = min(with_faces, key=lambda p: abs(paths.index(p) - mid_idx))
+
+            events.append({
+                "id": f"evt_{start_dt.strftime('%Y%m%d_%H%M%S')}",
+                "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "end":   end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_days": duration_days,
+                "photo_count": len(paths),
+                "photos": paths,
+                "top_faces": top_faces,
+                "top_places": top_places,
+                "cover": cover,
+            })
+
+        # newest first for serve
+        events.sort(key=lambda e: e["start"], reverse=True)
+
+        out = {
+            "built_at": datetime.now().isoformat(),
+            "gap_hours": gap_hours,
+            "min_photos": min_photos,
+            "total_events": len(events),
+            "events": events,
+        }
+        out_path = self.index_path.parent / "timeline_events.json"
+        out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2))
+        LOGGER.info("Timeline saved → %s (%d events)", out_path, len(events))
+        return out
+
     def get_face_summary(self) -> Dict:
         """取得人臉摘要。"""
         if not self.index:
@@ -657,6 +783,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="啟用反向地理編碼，為有 GPS 的照片回填 location_name（需 reverse-geocoder 套件）",
     )
 
+    # build-timeline 子命令
+    tl_p = sub.add_parser("build-timeline", help="從現有 photo_index 聚合「事件」並寫 timeline_events.json")
+    tl_p.add_argument("--gap-hours", type=float, default=6.0, help="切段門檻（相鄰照片間隔小時，預設 6）")
+    tl_p.add_argument("--min-photos", type=int, default=3, help="最小事件照片數（預設 3）")
+
     # search 子命令
     search_p = sub.add_parser("search", help="搜尋照片")
     search_p.add_argument("query", nargs="?", default="", help="語義查詢")
@@ -694,6 +825,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             with_location=args.with_location,
         )
         print(f"Index built: {index.index.get('total_images', 0)} images")
+
+    elif args.command == "build-timeline":
+        out = index.build_timeline_events(
+            gap_hours=args.gap_hours,
+            min_photos=args.min_photos,
+        )
+        print(f"Timeline built: {out['total_events']} events "
+              f"(gap={out['gap_hours']}h, min_photos={out['min_photos']})")
 
     elif args.command == "search":
         results = index.search(
