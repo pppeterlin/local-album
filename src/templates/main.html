@@ -53,6 +53,25 @@ h1{text-align:left;margin:0;font-size:28px;font-weight:600;letter-spacing:-0.02e
 .toolbar button:active{transform:scale(.96)}
 .toolbar button.active{background:hsl(var(--p));color:hsl(var(--pc));box-shadow:0 2px 10px hsl(var(--p) / 0.25)}
 
+/* ── v0.6 shortcuts (overview / timeline / memories entry cards) ── */
+.shortcuts{display:grid;gap:10px;margin-bottom:20px;
+  grid-template-columns:1fr}
+@media (min-width:720px){ .shortcuts{grid-template-columns:repeat(2,1fr)} }
+@media (min-width:1200px){ .shortcuts{grid-template-columns:repeat(3,1fr)} }
+.shortcut-card{display:flex;align-items:center;gap:14px;padding:14px 18px;
+  background:hsl(var(--b2));color:hsl(var(--bc));border-radius:16px;text-decoration:none;
+  transition:transform .2s ease-out, box-shadow .2s ease-out, background .2s}
+.shortcut-card:hover{transform:translateY(-2px);background:hsl(var(--b3) / 0.7);
+  box-shadow:0 4px 14px hsl(var(--n) / 0.08)}
+.shortcut-card:active{transform:scale(.98)}
+.shortcut-card .icon{display:inline-flex;align-items:center;justify-content:center;
+  width:42px;height:42px;border-radius:12px;background:hsl(var(--p) / 0.18);color:hsl(var(--p));flex-shrink:0}
+.shortcut-card .icon [data-lucide]{width:22px;height:22px}
+.shortcut-card .text{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
+.shortcut-card .text .title{font-size:15px;font-weight:600;letter-spacing:-0.01em}
+.shortcut-card .text .sub{font-size:12px;color:hsl(var(--bc) / 0.55)}
+.shortcut-card .chev{color:hsl(var(--bc) / 0.35);width:18px;height:18px;flex-shrink:0}
+
 /* ── Kind segmented control (face / pet) ── */
 .kind-toggle{display:inline-flex;background:hsl(var(--b2));border-radius:999px;padding:4px;margin-bottom:24px;gap:0}
 .kind-toggle button{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:transparent;
@@ -349,6 +368,15 @@ body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin
 
 <h1 id="mainTitle">家庭相簿</h1>
 <div class="subtitle admin-only" id="subtitle"></div>
+
+<!-- v0.6 shortcuts: jump to overview / timeline / memories -->
+<div class="shortcuts">
+  <a href="/overview" class="shortcut-card">
+    <span class="icon"><i data-lucide="layout-grid"></i></span>
+    <span class="text"><span class="title">總覽</span><span class="sub">所有照片，依時間排列</span></span>
+    <i data-lucide="chevron-right" class="chev"></i>
+  </a>
+</div>
 
 <div class="kind-toggle" id="kindToggle">
   <button class="active" data-kind="face" onclick="setKind('face')"><i data-lucide="users"></i> 人臉</button>

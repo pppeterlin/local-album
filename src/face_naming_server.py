@@ -19,8 +19,23 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _paths import PROJECT_ROOT as PROJECT_DIR, FACES_DIR, PETS_DIR  # noqa: E402
+from _paths import PROJECT_ROOT as PROJECT_DIR, FACES_DIR, PETS_DIR, INDEX_DIR  # noqa: E402
 import _auth  # noqa: E402
+
+# In-memory cache of photo_index.json — used by /api/overview, /api/timeline,
+# /api/memories. Keyed by file mtime so edits via Photo_Index.py CLI hot-reload.
+_PHOTO_INDEX_CACHE: dict = {"mtime": 0.0, "data": None}
+
+
+def _load_photo_index():
+    idx_path = INDEX_DIR / "photo_index.json"
+    if not idx_path.exists():
+        return None
+    mtime = idx_path.stat().st_mtime
+    if _PHOTO_INDEX_CACHE["mtime"] != mtime:
+        _PHOTO_INDEX_CACHE["data"] = json.loads(idx_path.read_text(encoding="utf-8"))
+        _PHOTO_INDEX_CACHE["mtime"] = mtime
+    return _PHOTO_INDEX_CACHE["data"]
 
 # Template directory (HTML extracted from this file in v0.5).
 # Read on every request — files are small, OS page cache handles it,
@@ -260,6 +275,12 @@ class Handler(SimpleHTTPRequestHandler):
             if not self._require_admin():
                 return
             self.html(self.generate_admin_html())
+
+        elif path in ("/overview", "/overview/"):
+            self.html(_load_template("overview.html"))
+
+        elif path == "/api/overview":
+            self.json_response(self._build_overview_payload())
 
         elif path == "/api/admin/users":
             if not self._require_admin(): return
@@ -786,6 +807,42 @@ class Handler(SimpleHTTPRequestHandler):
             return True
         except Exception:  # noqa: BLE001
             return False
+
+    # ---- overview / timeline / memories (v0.6) ----
+
+    def _build_overview_payload(self) -> dict:
+        """Slim per-photo records for the /overview page, viewer-filtered.
+
+        Returns {"photos": [...], "total": int} or {"error": ...} when
+        the index hasn't been built yet (admin should run
+        `Photo_Index.py build` to populate it).
+        """
+        idx = _load_photo_index()
+        if not idx:
+            return {
+                "error": "photo_index not built",
+                "hint": "uv run python src/Photo_Index.py build --labels ... --faces ... --embeddings ... --with-location",
+                "photos": [],
+                "total": 0,
+            }
+        perms = self._perms()
+        photos = []
+        for path, info in idx.get("images", {}).items():
+            if not info.get("time"):
+                continue  # no timestamp → can't place on timeline
+            face_ids = [f.get("face_id", "") for f in info.get("faces", []) if f.get("face_id")]
+            if not _auth.can_see_photo(perms, path, face_ids):
+                continue
+            photos.append({
+                "path": path,
+                "time": info["time"],
+                "year": info.get("year"),
+                "month": info.get("month"),
+                "location_name": info.get("location_name"),
+            })
+        # newest first
+        photos.sort(key=lambda p: p["time"], reverse=True)
+        return {"photos": photos, "total": len(photos)}
 
     # ---- admin: users / groups / visibility helpers ----
 
