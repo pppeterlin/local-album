@@ -72,6 +72,160 @@ class PhotoIndex:
             self.location_names = json.loads(self.location_names_path.read_text(encoding="utf-8"))
 
     @staticmethod
+    @staticmethod
+    def _parse_filename_time(path: str) -> Optional[datetime]:
+        """Best-effort time recovery from common filename patterns.
+        Handles: IMG_YYYYMMDD_HHMMSS, IMG-YYYYMMDD-WA*, YYYY-MM-DD HH.MM.SS,
+                 YYYYMMDD_HHMMSS, screenshots like Screenshot_YYYYMMDD-*.
+        """
+        import re as _re
+        name = Path(path).name
+        # YYYYMMDD_HHMMSS  (most common camera output)
+        m = _re.search(r"(?<!\d)(\d{4})(\d{2})(\d{2})[_\- ]?(\d{2})(\d{2})(\d{2})(?!\d)", name)
+        if m:
+            y, mo, d, h, mi, s = (int(x) for x in m.groups())
+        else:
+            # YYYY-MM-DD HH.MM.SS or YYYY-MM-DD_HH-MM-SS
+            m = _re.search(r"(\d{4})[-_](\d{2})[-_](\d{2})[ _.\-](\d{2})[.\-_](\d{2})[.\-_](\d{2})", name)
+            if m:
+                y, mo, d, h, mi, s = (int(x) for x in m.groups())
+            else:
+                # Date only: YYYYMMDD or YYYY-MM-DD — use noon to land on the correct calendar day
+                m = _re.search(r"(?<!\d)(\d{4})[-_]?(\d{2})[-_]?(\d{2})(?!\d)", name)
+                if not m:
+                    return None
+                y, mo, d = (int(x) for x in m.groups())
+                h, mi, s = 12, 0, 0
+        try:
+            return datetime(y, mo, d, h, mi, s)
+        except ValueError:
+            return None
+
+    def _fill_missing_time(self, images: Dict[str, Dict]) -> None:
+        """For images without ``time``, try (1) PIL EXIF re-read from disk,
+        (2) filename pattern parsing, (3) file mtime as last resort.
+
+        Stamps ``time``, ``year``, ``month`` and a ``time_source`` tag so
+        downstream consumers can tell how trustworthy the timestamp is.
+        """
+        missing = [p for p, info in images.items() if not info.get("time")]
+        if not missing:
+            return
+        LOGGER.info("Backfilling time for %d photos without EXIF…", len(missing))
+
+        try:
+            from PIL import Image, ExifTags
+            tag_map = {v: k for k, v in ExifTags.TAGS.items()}
+            DTO = tag_map.get("DateTimeOriginal")
+            DTD = tag_map.get("DateTimeDigitized")
+            DT  = tag_map.get("DateTime")
+            DATE_TAGS = [t for t in (DTO, DTD, DT) if t]
+        except ImportError:
+            Image, DATE_TAGS = None, []
+
+        stats = {"exif": 0, "filename": 0, "mtime": 0, "missing_file": 0}
+        for i, path in enumerate(missing):
+            if i and i % 5000 == 0:
+                LOGGER.info("  …%d / %d", i, len(missing))
+            p = Path(path)
+            if not p.exists():
+                stats["missing_file"] += 1
+                continue
+
+            dt = None; source = None
+
+            # 1. PIL EXIF re-read
+            if Image is not None:
+                try:
+                    with Image.open(p) as im:
+                        ex = im.getexif()
+                        for tid in DATE_TAGS:
+                            if not tid: continue
+                            v = ex.get(tid)
+                            if not v: continue
+                            try:
+                                dt = datetime.strptime(str(v).strip(), "%Y:%m:%d %H:%M:%S")
+                                source = "exif"
+                                break
+                            except ValueError:
+                                pass
+                except Exception:  # noqa: BLE001
+                    pass
+
+            # 2. Filename pattern
+            if dt is None:
+                dt = self._parse_filename_time(path)
+                if dt is not None:
+                    source = "filename"
+
+            # 3. mtime fallback
+            if dt is None:
+                try:
+                    dt = datetime.fromtimestamp(p.stat().st_mtime)
+                    source = "mtime"
+                except Exception:  # noqa: BLE001
+                    continue
+
+            stats[source] = stats.get(source, 0) + 1
+            images[path]["time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+            images[path]["year"] = dt.year
+            images[path]["month"] = dt.month
+            images[path]["time_source"] = source
+
+        LOGGER.info(
+            "Time backfill done. EXIF re-read: %d, filename: %d, mtime: %d, missing file: %d",
+            stats["exif"], stats["filename"], stats["mtime"], stats["missing_file"],
+        )
+
+    @staticmethod
+    def _parse_gps(gps: dict) -> Optional[Tuple[float, float]]:
+        """
+        Convert a PIL-style EXIF GPSInfo dict to (lat, lng) decimal degrees.
+
+        PIL leaves GPSInfo as tag-numbered (1/2/3/4 for ref/lat/ref/lng);
+        keys may be int or str depending on whether the dict has been
+        round-tripped through JSON. Values for lat/lng are DMS tuples
+        (degrees, minutes, seconds).
+        """
+        if not isinstance(gps, dict):
+            return None
+
+        def g(*keys):
+            for k in keys:
+                if k in gps:
+                    return gps[k]
+            return None
+
+        lat_ref = g(1, "1", "GPSLatitudeRef") or "N"
+        lat_dms = g(2, "2", "GPSLatitude")
+        lng_ref = g(3, "3", "GPSLongitudeRef") or "E"
+        lng_dms = g(4, "4", "GPSLongitude")
+        if not lat_dms or not lng_dms:
+            return None
+        try:
+            # DMS tuple → decimal degrees
+            if hasattr(lat_dms, "__len__") and len(lat_dms) == 3:
+                lat = float(lat_dms[0]) + float(lat_dms[1]) / 60 + float(lat_dms[2]) / 3600
+            else:
+                lat = float(lat_dms)  # already decimal
+            if hasattr(lng_dms, "__len__") and len(lng_dms) == 3:
+                lng = float(lng_dms[0]) + float(lng_dms[1]) / 60 + float(lng_dms[2]) / 3600
+            else:
+                lng = float(lng_dms)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if str(lat_ref).upper().startswith("S"):
+            lat = -lat
+        if str(lng_ref).upper().startswith("W"):
+            lng = -lng
+        # Discard nonsense values (some EXIF writers leave (0,0,0))
+        if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+            return None
+        if lat == 0 and lng == 0:
+            return None
+        return lat, lng
+
+    @staticmethod
     def _load_overlay(path: Path, default):
         """讀 overlay JSON；不存在或壞掉就回 default。"""
         if not path.exists():
@@ -194,14 +348,26 @@ class PhotoIndex:
 
         LOGGER.info("Loaded %d images from labels", len(images))
 
-        # 2. 載入 EXIF（如果有 embeddings.pkl）
-        if embeddings_path and Path(embeddings_path).exists():
-            LOGGER.info("Loading EXIF from %s", embeddings_path)
-            with open(embeddings_path, "rb") as f:
-                emb_data = pickle.load(f)
+        # 2. 載入 EXIF（如果有 embeddings.pkl 或目錄）。支援單檔 / 目錄（auto-discover *.pkl）
+        if embeddings_path:
+            ep = Path(embeddings_path)
+            pkl_files: List[Path] = []
+            if ep.is_dir():
+                # Skip macOS AppleDouble (._*) and other dotfiles
+                pkl_files = sorted(p for p in ep.glob("*.pkl") if not p.name.startswith("."))
+                LOGGER.info("Discovered %d embedding files in %s", len(pkl_files), ep)
+            elif ep.exists():
+                pkl_files = [ep]
 
-            for path, exif in zip(emb_data["paths"], emb_data.get("exif", [])):
-                if path in images:
+            exif_merged = 0
+            gps_extracted = 0
+            for pkl in pkl_files:
+                LOGGER.info("Loading EXIF from %s", pkl)
+                with open(pkl, "rb") as f:
+                    emb_data = pickle.load(f)
+                for path, exif in zip(emb_data.get("paths", []), emb_data.get("exif", [])):
+                    if not (path in images and exif):
+                        continue
                     # 時間
                     dt_str = exif.get("DateTimeOriginal")
                     if dt_str:
@@ -212,20 +378,27 @@ class PhotoIndex:
                             images[path]["month"] = dt.month
                         except ValueError:
                             pass
-
-                    # GPS
-                    gps = exif.get("GPSInfo")
-                    if gps:
-                        images[path]["gps"] = gps
-                        # 簡單的地理位置描述
-                        lat = gps.get("GPSLatitude")
-                        lng = gps.get("GPSLongitude")
-                        if lat and lng:
+                    # GPS：PIL 給的 GPSInfo 是 tag-numbered dict（key 為 int 或 str("1"/"2")）。
+                    # tag 1=GPSLatitudeRef, 2=GPSLatitude (DMS tuple), 3=GPSLongitudeRef,
+                    # 4=GPSLongitude (DMS tuple)
+                    gps_raw = exif.get("GPSInfo")
+                    if gps_raw:
+                        latlng = self._parse_gps(gps_raw)
+                        if latlng is not None:
+                            lat, lng = latlng
+                            images[path]["gps"] = {"GPSLatitude": lat, "GPSLongitude": lng}
                             images[path]["location"] = f"{lat:.4f},{lng:.4f}"
+                            gps_extracted += 1
+                    if images[path].get("time") or images[path].get("gps"):
+                        exif_merged += 1
+            LOGGER.info("Merged EXIF data: %d photos got time/GPS (%d with GPS)",
+                        exif_merged, gps_extracted)
 
-            LOGGER.info("Merged EXIF data")
+        # 2.5 補時間：對沒 time 的照片，從磁碟讀 EXIF / 解析檔名 / fallback mtime
+        # (PIL 讀 EXIF 不解 pixel 資料很快，~5ms/file × 50k 約 4 分鐘，one-time cost)
+        self._fill_missing_time(images)
 
-        # 2.5 反向地理編碼（GPS → 城市/國家），可選
+        # 2.6 反向地理編碼（GPS → 城市/國家），可選
         if with_location:
             self._backfill_location_names(images)
 
