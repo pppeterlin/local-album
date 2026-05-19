@@ -82,11 +82,80 @@ class PhotoIndex:
             LOGGER.warning("Failed to read overlay %s: %s", path, e)
             return default
 
+    def _backfill_location_names(self, images: Dict[str, Dict]) -> None:
+        """
+        為 ``images`` 中有 GPS 的照片回填 ``location_name``。
+
+        策略：
+        1. 收集所有唯一 (lat, lng) 座標（rounded 到小數點後 4 位 ≈ 11m 精度）
+        2. 一次性呼叫 ``reverse_geocoder.search`` 拿地名（離線、純 numpy）
+        3. 若 ``location_names.json`` 有自訂覆寫（key=``"lat,lng"``），用使用者值
+        """
+        try:
+            import reverse_geocoder as rg
+        except ImportError:
+            LOGGER.warning(
+                "reverse_geocoder not installed; skipping --with-location. "
+                "Install with: pip install reverse-geocoder"
+            )
+            return
+
+        coord_to_paths: Dict[Tuple[float, float], List[str]] = {}
+        for path, info in images.items():
+            gps = info.get("gps")
+            if not gps:
+                continue
+            lat, lng = gps.get("GPSLatitude"), gps.get("GPSLongitude")
+            if lat is None or lng is None:
+                continue
+            key = (round(float(lat), 4), round(float(lng), 4))
+            coord_to_paths.setdefault(key, []).append(path)
+
+        if not coord_to_paths:
+            LOGGER.info("No GPS coordinates found; nothing to reverse-geocode.")
+            return
+
+        coords = list(coord_to_paths.keys())
+        LOGGER.info("Reverse-geocoding %d unique coordinates (%d photos)...",
+                    len(coords), sum(len(p) for p in coord_to_paths.values()))
+        # mode=1 uses single-thread; cheaper for our scale + avoids the noisy
+        # "Loading formatted geocoded file..." reload on subsequent calls.
+        results = rg.search(coords, mode=1)
+
+        # Build coord → "City, CC" map, apply user overrides from location_names.json
+        coord_to_name: Dict[Tuple[float, float], str] = {}
+        for coord, r in zip(coords, results):
+            city = r.get("name", "").strip()
+            cc = r.get("cc", "").strip()
+            coord_to_name[coord] = f"{city}, {cc}" if city and cc else (city or cc or "Unknown")
+
+        # User overrides ("lat,lng" key) win over auto-geocoded names
+        overrides_applied = 0
+        for coord in coords:
+            key_str = f"{coord[0]:.4f},{coord[1]:.4f}"
+            if key_str in self.location_names:
+                coord_to_name[coord] = self.location_names[key_str]
+                overrides_applied += 1
+
+        # Stamp location_name onto every image
+        stamped = 0
+        for coord, paths in coord_to_paths.items():
+            name = coord_to_name[coord]
+            for path in paths:
+                images[path]["location_name"] = name
+                stamped += 1
+
+        LOGGER.info(
+            "Reverse-geocoded %d photos across %d places (%d user overrides applied)",
+            stamped, len(set(coord_to_name.values())), overrides_applied,
+        )
+
     def build(
         self,
         labels_path: str,
         faces_path: Optional[str] = None,
         embeddings_path: Optional[str] = None,
+        with_location: bool = False,
     ) -> Dict:
         """
         建立統一索引。
@@ -95,6 +164,10 @@ class PhotoIndex:
             labels_path: labels.json 路徑
             faces_path: face_clusters.json 路徑（可選）
             embeddings_path: embeddings.pkl 路徑（可選，用於 EXIF）
+            with_location: 啟用反向地理編碼（離線，需 ``reverse-geocoder`` 套件）
+                為每張有 GPS 的照片回填 ``location_name`` 欄位（如 ``Taipei, TW``）。
+                用戶可在 ``index/location_names.json`` 用 ``"lat,lng" → "name"``
+                覆寫自動結果（精度為小數點後 4 位）。
 
         Returns:
             索引結構
@@ -151,6 +224,10 @@ class PhotoIndex:
                             images[path]["location"] = f"{lat:.4f},{lng:.4f}"
 
             LOGGER.info("Merged EXIF data")
+
+        # 2.5 反向地理編碼（GPS → 城市/國家），可選
+        if with_location:
+            self._backfill_location_names(images)
 
         # 3. 載入人臉分群 + 套用人工 overlay（merges / moves / removed）
         if faces_path and Path(faces_path).exists():
@@ -402,6 +479,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     build_p.add_argument("--labels", required=True, help="labels.json 路徑")
     build_p.add_argument("--faces", default=None, help="face_clusters.json 路徑")
     build_p.add_argument("--embeddings", default=None, help="embeddings.pkl 路徑（用於 EXIF）")
+    build_p.add_argument(
+        "--with-location", action="store_true",
+        help="啟用反向地理編碼，為有 GPS 的照片回填 location_name（需 reverse-geocoder 套件）",
+    )
 
     # search 子命令
     search_p = sub.add_parser("search", help="搜尋照片")
@@ -437,6 +518,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             labels_path=args.labels,
             faces_path=args.faces,
             embeddings_path=args.embeddings,
+            with_location=args.with_location,
         )
         print(f"Index built: {index.index.get('total_images', 0)} images")
 
