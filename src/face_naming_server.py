@@ -35,6 +35,7 @@ _PHOTO_INDEX_CACHE: dict = {"mtime": 0.0, "data": None}
 _TIMELINE_CACHE:    dict = {"mtime": 0.0, "data": None}
 _PETS_CACHE:        dict = {"mtime": 0.0, "data": None}
 _PATH_TO_PETS_CACHE: dict = {"mtime": 0.0, "data": None}
+_PATH_TO_FACES_CACHE: dict = {"mtime": 0.0, "data": None}
 
 
 def _mtime_cached(path: Path, cache: dict):
@@ -57,6 +58,26 @@ def _load_timeline():
 
 def _load_pets():
     return _mtime_cached(PETS_DIR / "pet_clusters.json", _PETS_CACHE)
+
+
+def _path_to_faces() -> Dict[str, List[str]]:
+    """Map photo path → list of face_id strings (from photo_index 'faces').
+    Cached by photo_index.json mtime so memories/overview/timeline don't
+    have to rebuild this 57k-entry map on every request."""
+    idx_path = INDEX_DIR / "photo_index.json"
+    if not idx_path.exists():
+        return {}
+    mtime = idx_path.stat().st_mtime
+    if _PATH_TO_FACES_CACHE["mtime"] != mtime:
+        idx = _load_photo_index() or {}
+        m: Dict[str, List[str]] = {}
+        for p, info in idx.get("images", {}).items():
+            ids = [f.get("id", "") for f in info.get("faces", []) if f.get("id")]
+            if ids:
+                m[p] = ids
+        _PATH_TO_FACES_CACHE["data"] = m
+        _PATH_TO_FACES_CACHE["mtime"] = mtime
+    return _PATH_TO_FACES_CACHE["data"] or {}
 
 
 def _path_to_pets() -> Dict[str, List[str]]:
@@ -925,10 +946,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         perms = self._perms()
         pets_map = _path_to_pets()
-        # Bulk-build path → face_ids map once; avoids per-photo overlay re-load
-        path_to_faces: Dict[str, List[str]] = {}
-        for p, info in idx.get("images", {}).items():
-            path_to_faces[p] = [f.get("id", "") for f in info.get("faces", []) if f.get("id")]
+        path_to_faces = _path_to_faces()  # mtime-cached, see _path_to_faces()
 
         filtered_events = []
         for evt in tl.get("events", []):
@@ -1039,13 +1057,20 @@ class Handler(SimpleHTTPRequestHandler):
                 picked = _r.sample(paths, n)
             return sorted(picked, key=lambda p: images_map.get(p, {}).get("time", ""))
 
-        # Build path → face_ids map once
-        path_to_faces: Dict[str, List[str]] = {}
-        for p, info in images_map.items():
-            path_to_faces[p] = [f.get("id", "") for f in info.get("faces", []) if f.get("id")]
+        # Reuse mtime-cached path→faces / path→pets maps (vs rebuilding 57k
+        # entries every request — saved ~3s on Chun's library).
+        path_to_faces = _path_to_faces()
         pets_map = _path_to_pets()
+        # Memoize visibility within this request — every generator below asks
+        # about the same photos repeatedly, and can_see_photo does multiple
+        # set intersections each call.
+        _visible_cache: Dict[str, bool] = {}
         def can_see(p):
-            return _auth.can_see_photo(perms, p, path_to_faces.get(p, []), pets_map.get(p, []))
+            v = _visible_cache.get(p)
+            if v is None:
+                v = _auth.can_see_photo(perms, p, path_to_faces.get(p, []), pets_map.get(p, []))
+                _visible_cache[p] = v
+            return v
 
         cards: List[dict] = []
         today = date.today()
@@ -1179,12 +1204,23 @@ class Handler(SimpleHTTPRequestHandler):
         # decoration description that says 彩虹 once doesn't get into 天空).
         TOPIC_MIN_DISTINCT = 2
 
-        def topic_unique_hits(label, cfg):
-            """Count DISTINCT include keywords that appear in label.
+        import re as _re
+        # Compile per-topic regexes once (alternation is one pass through label
+        # vs N substring checks — ~5× faster on 57k photos).
+        _topic_inc_re: Dict[str, "_re.Pattern"] = {}
+        _topic_exc_re: Dict[str, Optional["_re.Pattern"]] = {}
+        for _topic, _cfg in TOPICS.items():
+            _topic_inc_re[_topic] = _re.compile("|".join(_re.escape(kw) for kw in _cfg["include"]))
+            _topic_exc_re[_topic] = (_re.compile("|".join(_re.escape(kw) for kw in _cfg["exclude"]))
+                                     if _cfg["exclude"] else None)
+
+        def topic_unique_hits(label, topic):
+            """Count DISTINCT include keywords in label for this topic.
             Returns 0 if any exclude keyword is present."""
             if not label: return 0
-            if any(kw in label for kw in cfg["exclude"]): return 0
-            return sum(1 for kw in cfg["include"] if kw in label)
+            excl = _topic_exc_re[topic]
+            if excl and excl.search(label): return 0
+            return len(set(_topic_inc_re[topic].findall(label)))
 
         topic_names = list(TOPICS.keys())
         _r.shuffle(topic_names)
@@ -1197,7 +1233,7 @@ class Handler(SimpleHTTPRequestHandler):
             for p, info in idx["images"].items():
                 if not info.get("year") or not info.get("month"):
                     continue
-                hits = topic_unique_hits(info.get("label") or "", cfg)
+                hits = topic_unique_hits(info.get("label") or "", topic)
                 if hits < TOPIC_MIN_DISTINCT:
                     continue
                 if not can_see(p): continue
