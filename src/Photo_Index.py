@@ -306,18 +306,22 @@ class PhotoIndex:
 
     def build(
         self,
-        labels_path: str,
+        labels_paths=None,
         faces_path: Optional[str] = None,
-        embeddings_path: Optional[str] = None,
+        embeddings_paths=None,
         with_location: bool = False,
+        # Back-compat single-string aliases
+        labels_path: Optional[str] = None,
+        embeddings_path: Optional[str] = None,
     ) -> Dict:
         """
         建立統一索引。
 
         Args:
-            labels_path: labels.json 路徑
-            faces_path: face_clusters.json 路徑（可選）
-            embeddings_path: embeddings.pkl 路徑（可選，用於 EXIF）
+            labels_paths: list of labels.json file paths OR directories (auto-discover *.json).
+                Each photo root may have its own labels sidecar; the union is consumed.
+            faces_path: face_clusters.json 路徑（全域）
+            embeddings_paths: list of embeddings.pkl files OR directories.
             with_location: 啟用反向地理編碼（離線，需 ``reverse-geocoder`` 套件）
                 為每張有 GPS 的照片回填 ``location_name`` 欄位（如 ``Taipei, TW``）。
                 用戶可在 ``index/location_names.json`` 用 ``"lat,lng" → "name"``
@@ -326,38 +330,56 @@ class PhotoIndex:
         Returns:
             索引結構
         """
-        LOGGER.info("Building unified index...")
+        # Back-compat: accept the old single-string form too
+        if labels_path and not labels_paths:
+            labels_paths = [labels_path]
+        if embeddings_path and not embeddings_paths:
+            embeddings_paths = [embeddings_path]
+        labels_paths = labels_paths or []
+        embeddings_paths = embeddings_paths or []
 
-        # 1. 載入 labels
-        LOGGER.info("Loading labels from %s", labels_path)
-        with open(labels_path, "r", encoding="utf-8") as f:
-            labels_data = json.load(f)
+        # Resolve each input to a concrete list of files (expand directories)
+        def _expand(paths_or_dirs, glob_pat: str) -> List[Path]:
+            files: List[Path] = []
+            for arg in paths_or_dirs:
+                p = Path(arg)
+                if p.is_dir():
+                    files.extend(sorted(x for x in p.glob(glob_pat) if not x.name.startswith(".")))
+                elif p.exists():
+                    files.append(p)
+                else:
+                    LOGGER.warning("Skipping missing path: %s", p)
+            return files
+
+        labels_files = _expand(labels_paths, "*.json")
+        if not labels_files:
+            raise RuntimeError("No labels file given. Pass --labels at least once.")
+
+        LOGGER.info("Building unified index from %d labels file(s)...", len(labels_files))
 
         images: Dict[str, Dict] = {}
-        for r in labels_data.get("results", []):
-            if "error" not in r:
-                path = r["path"]
-                images[path] = {
-                    "path": path,
-                    "label": r.get("text", ""),
-                    "faces": [],
-                    "time": None,
-                    "location": None,
-                    "gps": None,
-                }
+        # 1. 載入 labels（multi-source: union all results, dedupe by path）
+        for lp in labels_files:
+            LOGGER.info("Loading labels from %s", lp)
+            with open(lp, "r", encoding="utf-8") as f:
+                labels_data = json.load(f)
+            for r in labels_data.get("results", []):
+                if "error" not in r:
+                    path = r["path"]
+                    images[path] = {
+                        "path": path,
+                        "label": r.get("text", ""),
+                        "faces": [],
+                        "time": None,
+                        "location": None,
+                        "gps": None,
+                    }
 
-        LOGGER.info("Loaded %d images from labels", len(images))
+        LOGGER.info("Loaded %d images across all labels files", len(images))
 
-        # 2. 載入 EXIF（如果有 embeddings.pkl 或目錄）。支援單檔 / 目錄（auto-discover *.pkl）
-        if embeddings_path:
-            ep = Path(embeddings_path)
-            pkl_files: List[Path] = []
-            if ep.is_dir():
-                # Skip macOS AppleDouble (._*) and other dotfiles
-                pkl_files = sorted(p for p in ep.glob("*.pkl") if not p.name.startswith("."))
-                LOGGER.info("Discovered %d embedding files in %s", len(pkl_files), ep)
-            elif ep.exists():
-                pkl_files = [ep]
+        # 2. 載入 EXIF — embeddings_paths 是 list，每個元素可以是檔案或目錄
+        pkl_files: List[Path] = _expand(embeddings_paths, "*.pkl")
+        if pkl_files:
 
             exif_merged = 0
             gps_extracted = 0
@@ -775,9 +797,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # build 子命令
     build_p = sub.add_parser("build", help="建立索引")
-    build_p.add_argument("--labels", required=True, help="labels.json 路徑")
-    build_p.add_argument("--faces", default=None, help="face_clusters.json 路徑")
-    build_p.add_argument("--embeddings", default=None, help="embeddings.pkl 路徑（用於 EXIF）")
+    # --labels and --embeddings can be repeated (one per photo root sidecar)
+    # AND/OR point to a directory (auto-discover *.json / *.pkl inside).
+    build_p.add_argument("--labels", required=True, action="append", default=[],
+                         help="labels.json 檔或包含多個 *.json 的目錄（可重複，每個對應一個 photo root）")
+    build_p.add_argument("--faces", default=None, help="face_clusters.json 路徑（全域）")
+    build_p.add_argument("--embeddings", action="append", default=[],
+                         help="embeddings .pkl 檔或目錄（可重複；用於 EXIF）")
     build_p.add_argument(
         "--with-location", action="store_true",
         help="啟用反向地理編碼，為有 GPS 的照片回填 location_name（需 reverse-geocoder 套件）",
@@ -819,9 +845,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.command == "build":
         index.build(
-            labels_path=args.labels,
+            labels_paths=args.labels,
             faces_path=args.faces,
-            embeddings_path=args.embeddings,
+            embeddings_paths=args.embeddings,
             with_location=args.with_location,
         )
         print(f"Index built: {index.index.get('total_images', 0)} images")
