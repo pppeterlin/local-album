@@ -324,10 +324,12 @@ body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin
 .year-filter .clear:hover{background:hsl(var(--b3))}
 .year-section{margin-bottom:18px}
 .year-header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;
-  background:hsl(var(--b1) / 0.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  background:hsl(var(--b3) / 0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
   color:hsl(var(--bc));font-weight:600;border-radius:12px;cursor:pointer;margin-bottom:8px;font-size:14px;
-  position:sticky;top:0;z-index:5;letter-spacing:-0.01em;transition:background .15s}
-.year-header:hover{background:hsl(var(--b2))}
+  position:sticky;top:0;z-index:5;letter-spacing:-0.01em;
+  box-shadow:0 1px 0 hsl(var(--n) / 0.04), 0 2px 8px hsl(var(--n) / 0.04);
+  transition:background .15s, box-shadow .15s}
+.year-header:hover{background:hsl(var(--b3));box-shadow:0 1px 0 hsl(var(--n) / 0.06), 0 4px 12px hsl(var(--n) / 0.06)}
 .year-header .toggle{display:inline-flex;align-items:center;justify-content:center;
   width:24px;height:24px;border-radius:50%;color:hsl(var(--bc) / 0.55);transition:background .15s}
 .year-header:hover .toggle{background:hsl(var(--bc) / 0.06)}
@@ -369,16 +371,16 @@ body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin
 <h1 id="mainTitle">家庭相簿</h1>
 <div class="subtitle admin-only" id="subtitle"></div>
 
-<!-- v0.6 shortcuts: jump to overview / timeline / memories -->
+<!-- v0.6 shortcuts: jump to overview / memories -->
 <div class="shortcuts">
   <a href="/overview" class="shortcut-card">
     <span class="icon"><i data-lucide="layout-grid"></i></span>
     <span class="text"><span class="title">總覽</span><span class="sub">所有照片，依時間排列</span></span>
     <i data-lucide="chevron-right" class="chev"></i>
   </a>
-  <a href="/timeline" class="shortcut-card">
-    <span class="icon"><i data-lucide="clock"></i></span>
-    <span class="text"><span class="title">時間線</span><span class="sub">自動聚合的旅行與事件</span></span>
+  <a href="/memories" class="shortcut-card">
+    <span class="icon"><i data-lucide="sparkles"></i></span>
+    <span class="text"><span class="title">回憶</span><span class="sub">那年今日、旅行、主題回顧</span></span>
     <i data-lucide="chevron-right" class="chev"></i>
   </a>
 </div>
@@ -821,7 +823,20 @@ function renderCard(c){
   `;
 }
 
+// Request token + AbortController guard against the modal race where the
+// user opens A, closes before A finishes loading, then opens B — without
+// these, A's old response can leak in and stamp stale title/photos.
+let _expandToken = 0;
+let _expandAbort = null;
+
 function openExpand(fid){
+  // Bump the token AND abort any prior in-flight fetch — the old .then() will
+  // see a mismatched token and bail out before touching DOM or state.
+  _expandToken++;
+  const myToken = _expandToken;
+  if (_expandAbort) { try { _expandAbort.abort(); } catch (_e) {} }
+  _expandAbort = new AbortController();
+
   openExpandFid = fid;
   openExpandMeta = null;
   yearFilter = '';
@@ -837,13 +852,23 @@ function openExpand(fid){
     selectedPaths.clear();
     renderSelectBar();
   }
+  // Clear stale header text so users don't see the PREVIOUS person's name
+  // hovering above the spinner while the new fetch is in flight.
+  document.getElementById('expandTitle').textContent = '';
+  document.getElementById('expandMeta').textContent = '';
   document.getElementById('expandBody').innerHTML = '<div class="spinner">載入中…</div>';
   document.getElementById('expandModal').classList.add('active');
   // 用 item 自己的 kind（混合模式下必要），fallback 到 window.KIND
   const it = ITEMS.find(x => x.id === fid);
   const itemKind = (it && it.kind) || (window.KIND === 'all' ? 'face' : window.KIND);
-  fetch(`/api/cluster_meta?fid=${encodeURIComponent(fid)}&kind=${encodeURIComponent(itemKind)}`).then(r=>r.json()).then(meta=>{
-    if(openExpandFid !== fid) return;
+  fetch(
+    `/api/cluster_meta?fid=${encodeURIComponent(fid)}&kind=${encodeURIComponent(itemKind)}`,
+    { signal: _expandAbort.signal }
+  ).then(r=>r.json()).then(meta=>{
+    // Two guards: token (handles same-fid re-click) and openExpandFid (handles
+    // close-then-open-different). Either failing means a NEWER request is
+    // already in flight or the modal was closed — drop this response silently.
+    if (myToken !== _expandToken || openExpandFid !== fid) return;
     openExpandMeta = meta;
     // 預設：只展開最新年度，其餘折疊。「無日期」也預設折疊。
     const yearSet = new Set();
@@ -858,6 +883,14 @@ function openExpand(fid){
     if(hasUndated) collapsedYears.add('無日期');
     materializedYears = new Set(latest ? [latest] : []);
     renderExpandBody();
+  }).catch(err => {
+    // AbortError is the expected path when user opens a different cluster;
+    // swallow it. Real network errors surface in the spinner area.
+    if (err && err.name === 'AbortError') return;
+    if (myToken === _expandToken) {
+      document.getElementById('expandBody').innerHTML =
+        '<div class="spinner" style="color:hsl(var(--er))">載入失敗：' + (err && err.message ? err.message : err) + '</div>';
+    }
   });
 }
 
