@@ -192,6 +192,12 @@ function render(){
     CARDS.map(renderCard).join('')
   }</div>`;
   window.refreshIcons && window.refreshIcons();
+  // Deep-link: /memories#<card_id> opens that card directly.
+  const hash = decodeURIComponent((location.hash || '').slice(1));
+  if (hash) {
+    const idx = CARDS.findIndex(c => c.id === hash);
+    if (idx >= 0) openCard(idx);
+  }
 }
 
 // Mosaic size pattern — 7-card cycle that tiles a 6-col grid PERFECTLY:

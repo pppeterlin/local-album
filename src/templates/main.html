@@ -72,6 +72,34 @@ h1{text-align:left;margin:0;font-size:28px;font-weight:600;letter-spacing:-0.02e
 .shortcut-card .text .sub{font-size:12px;color:hsl(var(--bc) / 0.55)}
 .shortcut-card .chev{color:hsl(var(--bc) / 0.35);width:18px;height:18px;flex-shrink:0}
 
+/* ── Today-memories carousel (top of main page) ── */
+.today-mem{margin:8px 0 24px}
+.today-mem-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;padding:0 2px}
+.today-mem-head .label{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:hsl(var(--bc) / 0.7);letter-spacing:.02em}
+.today-mem-head .label [data-lucide]{width:14px;height:14px}
+.today-mem-head .more{font-size:12px;color:hsl(var(--bc) / 0.5);text-decoration:none;display:inline-flex;align-items:center;gap:2px}
+.today-mem-head .more:hover{color:hsl(var(--p))}
+.today-mem-head .more [data-lucide]{width:13px;height:13px}
+.today-mem-grid{display:grid;gap:10px;grid-template-columns:1fr}
+@media (min-width:680px){ .today-mem-grid{grid-template-columns:repeat(3,1fr)} }
+.today-mem-card{position:relative;display:block;aspect-ratio:16/10;border-radius:18px;overflow:hidden;cursor:pointer;
+  background:hsl(var(--b2)) center/cover no-repeat;text-decoration:none;color:#fff;
+  box-shadow:0 1px 3px hsl(var(--n) / 0.08), 0 4px 16px hsl(var(--n) / 0.06);
+  transition:transform .25s ease-out, box-shadow .25s ease-out}
+.today-mem-card:hover{transform:translateY(-3px);box-shadow:0 6px 22px hsl(var(--n) / 0.14)}
+.today-mem-card:active{transform:scale(.98)}
+.today-mem-card::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 35%,rgba(0,0,0,.05) 55%,rgba(0,0,0,.55) 100%)}
+.today-mem-card .meta{position:absolute;left:0;right:0;bottom:0;padding:12px 14px;z-index:1;display:flex;flex-direction:column;gap:2px}
+.today-mem-card .tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:3px 8px;
+  background:rgba(255,255,255,.18);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border-radius:999px;align-self:flex-start;margin-bottom:6px;letter-spacing:.02em}
+.today-mem-card .tag [data-lucide]{width:11px;height:11px}
+.today-mem-card .t{font-size:15px;font-weight:600;letter-spacing:-0.01em;text-shadow:0 1px 4px rgba(0,0,0,.4)}
+.today-mem-card .s{font-size:11px;opacity:.85;text-shadow:0 1px 3px rgba(0,0,0,.4)}
+.today-mem-skel{height:120px;border-radius:18px;background:linear-gradient(90deg,hsl(var(--b2)) 25%,hsl(var(--b3) / 0.6) 50%,hsl(var(--b2)) 75%);
+  background-size:200% 100%;animation:tm-shimmer 1.4s linear infinite}
+@keyframes tm-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
 /* ── Kind segmented control (face / pet) ── */
 .kind-toggle{display:inline-flex;background:hsl(var(--b2));border-radius:999px;padding:4px;margin-bottom:24px;gap:0}
 .kind-toggle button{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:transparent;
@@ -385,6 +413,15 @@ body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin
   </a>
 </div>
 
+<!-- v0.6 today's-memories preview: 3 cards, populated by loadTodayMemories() -->
+<section class="today-mem" id="todayMem" style="display:none">
+  <div class="today-mem-head">
+    <span class="label"><i data-lucide="sparkles"></i> 今日回憶</span>
+    <a href="/memories" class="more">查看全部 <i data-lucide="chevron-right"></i></a>
+  </div>
+  <div class="today-mem-grid" id="todayMemGrid"></div>
+</section>
+
 <div class="kind-toggle" id="kindToggle">
   <button class="active" data-kind="face" onclick="setKind('face')"><i data-lucide="users"></i> 人臉</button>
   <button data-kind="pet" onclick="setKind('pet')"><i data-lucide="paw-print"></i> 寵物</button>
@@ -530,6 +567,49 @@ function logout(){
 
 loadStats();
 loadPage(0);
+loadTodayMemories();
+
+// Today's memories preview: pick 3 from /api/memories, link each to /memories#<id>
+function loadTodayMemories(){
+  const sec  = document.getElementById('todayMem');
+  const grid = document.getElementById('todayMemGrid');
+  if(!sec || !grid) return;
+  const TYPE = {
+    on_this_day:{i:'calendar-heart',l:'那年今日'},  trip:{i:'map-pin',l:'旅行'},
+    person:{i:'user',l:'人物'},  pet:{i:'paw-print',l:'寵物'},
+    place:{i:'map-pin',l:'地點'},  season:{i:'sparkles',l:'季節'},
+    weekend:{i:'calendar-heart',l:'週末'},  topic:{i:'image',l:'主題'},
+  };
+  fetch('/api/memories').then(r=>r.json()).then(d=>{
+    const cards = (d && d.cards) || [];
+    if(!cards.length) return;
+    // Shuffle then pick 3 — different selection each page load (per spec).
+    const pool = cards.slice();
+    for(let i = pool.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    const picks = pool.slice(0, 3);
+    grid.innerHTML = picks.map(c => {
+      const t = TYPE[c.type] || {i:'image',l:'回憶'};
+      const cover = c.cover ? `/img_thumb/${encodeURI(c.cover)}?w=700` : '';
+      const href  = `/memories#${encodeURIComponent(c.id)}`;
+      return `<a class="today-mem-card" href="${href}" style="background-image:url('${cover}')">
+        <div class="meta">
+          <span class="tag"><i data-lucide="${t.i}"></i> ${t.l}</span>
+          <div class="t">${escapeHtmlSimple(c.title || '')}</div>
+          <div class="s">${escapeHtmlSimple(c.subtitle || '')}</div>
+        </div>
+      </a>`;
+    }).join('');
+    sec.style.display = 'block';
+    window.refreshIcons && window.refreshIcons();
+  }).catch(()=>{ /* silent — carousel is non-critical */ });
+}
+
+function escapeHtmlSimple(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
 
 // Esc 關 modal
 document.addEventListener('keydown', e=>{
