@@ -284,8 +284,25 @@ def get_user_perms(username: str | None) -> dict:
 def path_blocked(path: str, blocked_paths: list[str]) -> bool:
     return any(path.startswith(bp) for bp in blocked_paths)
 
-def can_see_photo(perms: dict, path: str, face_ids: list[str]) -> bool:
-    """Decide visibility for a single photo. See module docstring for rule order."""
+def can_see_photo(perms: dict, path: str, face_ids: list[str], pet_ids: list[str] = ()) -> bool:
+    """Decide visibility for a single photo.
+
+    Rule order (first matching wins):
+      1. admin                                           → visible
+      2. identity ∈ faces(P)                             → visible  (本人特權，beats blocked_paths)
+      3. allowed_pets ∩ pets(P) (with whitelist semantic) → visible  (寵物明確分享，beats blocked_paths)
+      4. P.path ∈ blocked_paths                          → hidden
+      5. allowed_faces ∩ faces(P) (non-empty)            → visible
+      6. else                                            → hidden
+
+    Why pets beat blocked_paths (rule 3 above rule 4):
+        A pet only appears in ``allowed_pets`` because the admin explicitly
+        whitelisted it for this group ("這隻是我們的貓，家人都可以看"). The
+        blocked_paths list is for "Chun's personal phone dump", which usually
+        intersects ALL paths in a single-drive library. Without rule 3, mom
+        sees zero 奶茶 photos because every shot of the cat is in one of
+        Chun's blocked camera dirs.
+    """
     if perms["is_admin"]:
         return True
     if not perms["is_viewer"]:
@@ -294,16 +311,16 @@ def can_see_photo(perms: dict, path: str, face_ids: list[str]) -> bool:
     identity = perms.get("identity") or ""
     if identity and identity in face_ids:
         return True
+    # 寵物明確分享：allowed_pets 為空 = 公開；非空 = 白名單。Beats blocked_paths.
+    if pet_ids:
+        allowed_pets = perms.get("allowed_pets") or set()
+        if not allowed_pets or allowed_pets.intersection(pet_ids):
+            return True
     # 路徑黑名單 → 擋
     if path_blocked(path, perms["blocked_paths"]):
         return False
-    if not face_ids:
-        # no-face photo → admin only
-        # TODO(v0.3+): support per-group "public_paths" or "allow_no_face" so
-        # landscape / food shots in approved dirs can also reach viewers
-        # (e.g. share /Pictures/Travel/2024 with everyone, no face required).
-        return False
     # 群組允許的人臉出現在照片 → 可見
-    if perms["allowed_faces"].intersection(face_ids):
+    if face_ids and perms["allowed_faces"].intersection(face_ids):
         return True
-    return False  # 嚴格私有：未授權的人臉照片不顯示
+    # 無人臉、無寵物（或寵物未授權）的照片 → admin only
+    return False
