@@ -53,6 +53,53 @@ h1{text-align:left;margin:0;font-size:28px;font-weight:600;letter-spacing:-0.02e
 .toolbar button:active{transform:scale(.96)}
 .toolbar button.active{background:hsl(var(--p));color:hsl(var(--pc));box-shadow:0 2px 10px hsl(var(--p) / 0.25)}
 
+/* ── v0.6 shortcuts (overview / timeline / memories entry cards) ── */
+.shortcuts{display:grid;gap:10px;margin-bottom:20px;
+  grid-template-columns:1fr}
+@media (min-width:720px){ .shortcuts{grid-template-columns:repeat(2,1fr)} }
+@media (min-width:1200px){ .shortcuts{grid-template-columns:repeat(3,1fr)} }
+.shortcut-card{display:flex;align-items:center;gap:14px;padding:14px 18px;
+  background:hsl(var(--b2));color:hsl(var(--bc));border-radius:16px;text-decoration:none;
+  transition:transform .2s ease-out, box-shadow .2s ease-out, background .2s}
+.shortcut-card:hover{transform:translateY(-2px);background:hsl(var(--b3) / 0.7);
+  box-shadow:0 4px 14px hsl(var(--n) / 0.08)}
+.shortcut-card:active{transform:scale(.98)}
+.shortcut-card .icon{display:inline-flex;align-items:center;justify-content:center;
+  width:42px;height:42px;border-radius:12px;background:hsl(var(--p) / 0.18);color:hsl(var(--p));flex-shrink:0}
+.shortcut-card .icon [data-lucide]{width:22px;height:22px}
+.shortcut-card .text{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
+.shortcut-card .text .title{font-size:15px;font-weight:600;letter-spacing:-0.01em}
+.shortcut-card .text .sub{font-size:12px;color:hsl(var(--bc) / 0.55)}
+.shortcut-card .chev{color:hsl(var(--bc) / 0.35);width:18px;height:18px;flex-shrink:0}
+
+/* ── Today-memories carousel (top of main page) ── */
+.today-mem{margin:8px 0 24px}
+.today-mem-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;padding:0 2px}
+.today-mem-head .label{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:hsl(var(--bc) / 0.7);letter-spacing:.02em}
+.today-mem-head .label [data-lucide]{width:14px;height:14px}
+.today-mem-head .more{font-size:12px;color:hsl(var(--bc) / 0.5);text-decoration:none;display:inline-flex;align-items:center;gap:2px}
+.today-mem-head .more:hover{color:hsl(var(--p))}
+.today-mem-head .more [data-lucide]{width:13px;height:13px}
+.today-mem-grid{display:grid;gap:10px;grid-template-columns:1fr}
+@media (min-width:680px){ .today-mem-grid{grid-template-columns:repeat(3,1fr)} }
+.today-mem-card{position:relative;display:block;aspect-ratio:16/10;border-radius:18px;overflow:hidden;cursor:pointer;
+  background:hsl(var(--b2)) center/cover no-repeat;text-decoration:none;color:#fff;
+  box-shadow:0 1px 3px hsl(var(--n) / 0.08), 0 4px 16px hsl(var(--n) / 0.06);
+  transition:transform .25s ease-out, box-shadow .25s ease-out}
+.today-mem-card:hover{transform:translateY(-3px);box-shadow:0 6px 22px hsl(var(--n) / 0.14)}
+.today-mem-card:active{transform:scale(.98)}
+.today-mem-card::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 35%,rgba(0,0,0,.05) 55%,rgba(0,0,0,.55) 100%)}
+.today-mem-card .meta{position:absolute;left:0;right:0;bottom:0;padding:12px 14px;z-index:1;display:flex;flex-direction:column;gap:2px}
+.today-mem-card .tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:3px 8px;
+  background:rgba(255,255,255,.18);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border-radius:999px;align-self:flex-start;margin-bottom:6px;letter-spacing:.02em}
+.today-mem-card .tag [data-lucide]{width:11px;height:11px}
+.today-mem-card .t{font-size:15px;font-weight:600;letter-spacing:-0.01em;text-shadow:0 1px 4px rgba(0,0,0,.4)}
+.today-mem-card .s{font-size:11px;opacity:.85;text-shadow:0 1px 3px rgba(0,0,0,.4)}
+.today-mem-skel{height:120px;border-radius:18px;background:linear-gradient(90deg,hsl(var(--b2)) 25%,hsl(var(--b3) / 0.6) 50%,hsl(var(--b2)) 75%);
+  background-size:200% 100%;animation:tm-shimmer 1.4s linear infinite}
+@keyframes tm-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
 /* ── Kind segmented control (face / pet) ── */
 .kind-toggle{display:inline-flex;background:hsl(var(--b2));border-radius:999px;padding:4px;margin-bottom:24px;gap:0}
 .kind-toggle button{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:transparent;
@@ -305,10 +352,12 @@ body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin
 .year-filter .clear:hover{background:hsl(var(--b3))}
 .year-section{margin-bottom:18px}
 .year-header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;
-  background:hsl(var(--b1) / 0.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  background:hsl(var(--b3) / 0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
   color:hsl(var(--bc));font-weight:600;border-radius:12px;cursor:pointer;margin-bottom:8px;font-size:14px;
-  position:sticky;top:0;z-index:5;letter-spacing:-0.01em;transition:background .15s}
-.year-header:hover{background:hsl(var(--b2))}
+  position:sticky;top:0;z-index:5;letter-spacing:-0.01em;
+  box-shadow:0 1px 0 hsl(var(--n) / 0.04), 0 2px 8px hsl(var(--n) / 0.04);
+  transition:background .15s, box-shadow .15s}
+.year-header:hover{background:hsl(var(--b3));box-shadow:0 1px 0 hsl(var(--n) / 0.06), 0 4px 12px hsl(var(--n) / 0.06)}
 .year-header .toggle{display:inline-flex;align-items:center;justify-content:center;
   width:24px;height:24px;border-radius:50%;color:hsl(var(--bc) / 0.55);transition:background .15s}
 .year-header:hover .toggle{background:hsl(var(--bc) / 0.06)}
@@ -349,6 +398,29 @@ body:not(.admin) .tile .tcount{color:hsl(var(--bc) / 0.45);font-size:12px;margin
 
 <h1 id="mainTitle">家庭相簿</h1>
 <div class="subtitle admin-only" id="subtitle"></div>
+
+<!-- v0.6 shortcuts: jump to overview / memories -->
+<div class="shortcuts">
+  <a href="/overview" class="shortcut-card">
+    <span class="icon"><i data-lucide="layout-grid"></i></span>
+    <span class="text"><span class="title">總覽</span><span class="sub">所有照片，依時間排列</span></span>
+    <i data-lucide="chevron-right" class="chev"></i>
+  </a>
+  <a href="/memories" class="shortcut-card">
+    <span class="icon"><i data-lucide="sparkles"></i></span>
+    <span class="text"><span class="title">回憶</span><span class="sub">那年今日、旅行、主題回顧</span></span>
+    <i data-lucide="chevron-right" class="chev"></i>
+  </a>
+</div>
+
+<!-- v0.6 today's-memories preview: 3 cards, populated by loadTodayMemories() -->
+<section class="today-mem" id="todayMem" style="display:none">
+  <div class="today-mem-head">
+    <span class="label"><i data-lucide="sparkles"></i> 今日回憶</span>
+    <a href="/memories" class="more">查看全部 <i data-lucide="chevron-right"></i></a>
+  </div>
+  <div class="today-mem-grid" id="todayMemGrid"></div>
+</section>
 
 <div class="kind-toggle" id="kindToggle">
   <button class="active" data-kind="face" onclick="setKind('face')"><i data-lucide="users"></i> 人臉</button>
@@ -495,6 +567,49 @@ function logout(){
 
 loadStats();
 loadPage(0);
+loadTodayMemories();
+
+// Today's memories preview: pick 3 from /api/memories, link each to /memories#<id>
+function loadTodayMemories(){
+  const sec  = document.getElementById('todayMem');
+  const grid = document.getElementById('todayMemGrid');
+  if(!sec || !grid) return;
+  const TYPE = {
+    on_this_day:{i:'calendar-heart',l:'那年今日'},  trip:{i:'map-pin',l:'旅行'},
+    person:{i:'user',l:'人物'},  pet:{i:'paw-print',l:'寵物'},
+    place:{i:'map-pin',l:'地點'},  season:{i:'sparkles',l:'季節'},
+    weekend:{i:'calendar-heart',l:'週末'},  topic:{i:'image',l:'主題'},
+  };
+  fetch('/api/memories').then(r=>r.json()).then(d=>{
+    const cards = (d && d.cards) || [];
+    if(!cards.length) return;
+    // Shuffle then pick 3 — different selection each page load (per spec).
+    const pool = cards.slice();
+    for(let i = pool.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    const picks = pool.slice(0, 3);
+    grid.innerHTML = picks.map(c => {
+      const t = TYPE[c.type] || {i:'image',l:'回憶'};
+      const cover = c.cover ? `/img_thumb/${encodeURI(c.cover)}?w=700` : '';
+      const href  = `/memories#${encodeURIComponent(c.id)}`;
+      return `<a class="today-mem-card" href="${href}" style="background-image:url('${cover}')">
+        <div class="meta">
+          <span class="tag"><i data-lucide="${t.i}"></i> ${t.l}</span>
+          <div class="t">${escapeHtmlSimple(c.title || '')}</div>
+          <div class="s">${escapeHtmlSimple(c.subtitle || '')}</div>
+        </div>
+      </a>`;
+    }).join('');
+    sec.style.display = 'block';
+    window.refreshIcons && window.refreshIcons();
+  }).catch(()=>{ /* silent — carousel is non-critical */ });
+}
+
+function escapeHtmlSimple(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
 
 // Esc 關 modal
 document.addEventListener('keydown', e=>{
@@ -788,7 +903,20 @@ function renderCard(c){
   `;
 }
 
+// Request token + AbortController guard against the modal race where the
+// user opens A, closes before A finishes loading, then opens B — without
+// these, A's old response can leak in and stamp stale title/photos.
+let _expandToken = 0;
+let _expandAbort = null;
+
 function openExpand(fid){
+  // Bump the token AND abort any prior in-flight fetch — the old .then() will
+  // see a mismatched token and bail out before touching DOM or state.
+  _expandToken++;
+  const myToken = _expandToken;
+  if (_expandAbort) { try { _expandAbort.abort(); } catch (_e) {} }
+  _expandAbort = new AbortController();
+
   openExpandFid = fid;
   openExpandMeta = null;
   yearFilter = '';
@@ -804,13 +932,23 @@ function openExpand(fid){
     selectedPaths.clear();
     renderSelectBar();
   }
+  // Clear stale header text so users don't see the PREVIOUS person's name
+  // hovering above the spinner while the new fetch is in flight.
+  document.getElementById('expandTitle').textContent = '';
+  document.getElementById('expandMeta').textContent = '';
   document.getElementById('expandBody').innerHTML = '<div class="spinner">載入中…</div>';
   document.getElementById('expandModal').classList.add('active');
   // 用 item 自己的 kind（混合模式下必要），fallback 到 window.KIND
   const it = ITEMS.find(x => x.id === fid);
   const itemKind = (it && it.kind) || (window.KIND === 'all' ? 'face' : window.KIND);
-  fetch(`/api/cluster_meta?fid=${encodeURIComponent(fid)}&kind=${encodeURIComponent(itemKind)}`).then(r=>r.json()).then(meta=>{
-    if(openExpandFid !== fid) return;
+  fetch(
+    `/api/cluster_meta?fid=${encodeURIComponent(fid)}&kind=${encodeURIComponent(itemKind)}`,
+    { signal: _expandAbort.signal }
+  ).then(r=>r.json()).then(meta=>{
+    // Two guards: token (handles same-fid re-click) and openExpandFid (handles
+    // close-then-open-different). Either failing means a NEWER request is
+    // already in flight or the modal was closed — drop this response silently.
+    if (myToken !== _expandToken || openExpandFid !== fid) return;
     openExpandMeta = meta;
     // 預設：只展開最新年度，其餘折疊。「無日期」也預設折疊。
     const yearSet = new Set();
@@ -825,6 +963,14 @@ function openExpand(fid){
     if(hasUndated) collapsedYears.add('無日期');
     materializedYears = new Set(latest ? [latest] : []);
     renderExpandBody();
+  }).catch(err => {
+    // AbortError is the expected path when user opens a different cluster;
+    // swallow it. Real network errors surface in the spinner area.
+    if (err && err.name === 'AbortError') return;
+    if (myToken === _expandToken) {
+      document.getElementById('expandBody').innerHTML =
+        '<div class="spinner" style="color:hsl(var(--er))">載入失敗：' + (err && err.message ? err.message : err) + '</div>';
+    }
   });
 }
 

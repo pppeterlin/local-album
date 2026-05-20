@@ -26,7 +26,7 @@ import logging
 import os
 import pickle
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set, Tuple
 
@@ -72,6 +72,160 @@ class PhotoIndex:
             self.location_names = json.loads(self.location_names_path.read_text(encoding="utf-8"))
 
     @staticmethod
+    @staticmethod
+    def _parse_filename_time(path: str) -> Optional[datetime]:
+        """Best-effort time recovery from common filename patterns.
+        Handles: IMG_YYYYMMDD_HHMMSS, IMG-YYYYMMDD-WA*, YYYY-MM-DD HH.MM.SS,
+                 YYYYMMDD_HHMMSS, screenshots like Screenshot_YYYYMMDD-*.
+        """
+        import re as _re
+        name = Path(path).name
+        # YYYYMMDD_HHMMSS  (most common camera output)
+        m = _re.search(r"(?<!\d)(\d{4})(\d{2})(\d{2})[_\- ]?(\d{2})(\d{2})(\d{2})(?!\d)", name)
+        if m:
+            y, mo, d, h, mi, s = (int(x) for x in m.groups())
+        else:
+            # YYYY-MM-DD HH.MM.SS or YYYY-MM-DD_HH-MM-SS
+            m = _re.search(r"(\d{4})[-_](\d{2})[-_](\d{2})[ _.\-](\d{2})[.\-_](\d{2})[.\-_](\d{2})", name)
+            if m:
+                y, mo, d, h, mi, s = (int(x) for x in m.groups())
+            else:
+                # Date only: YYYYMMDD or YYYY-MM-DD — use noon to land on the correct calendar day
+                m = _re.search(r"(?<!\d)(\d{4})[-_]?(\d{2})[-_]?(\d{2})(?!\d)", name)
+                if not m:
+                    return None
+                y, mo, d = (int(x) for x in m.groups())
+                h, mi, s = 12, 0, 0
+        try:
+            return datetime(y, mo, d, h, mi, s)
+        except ValueError:
+            return None
+
+    def _fill_missing_time(self, images: Dict[str, Dict]) -> None:
+        """For images without ``time``, try (1) PIL EXIF re-read from disk,
+        (2) filename pattern parsing, (3) file mtime as last resort.
+
+        Stamps ``time``, ``year``, ``month`` and a ``time_source`` tag so
+        downstream consumers can tell how trustworthy the timestamp is.
+        """
+        missing = [p for p, info in images.items() if not info.get("time")]
+        if not missing:
+            return
+        LOGGER.info("Backfilling time for %d photos without EXIF…", len(missing))
+
+        try:
+            from PIL import Image, ExifTags
+            tag_map = {v: k for k, v in ExifTags.TAGS.items()}
+            DTO = tag_map.get("DateTimeOriginal")
+            DTD = tag_map.get("DateTimeDigitized")
+            DT  = tag_map.get("DateTime")
+            DATE_TAGS = [t for t in (DTO, DTD, DT) if t]
+        except ImportError:
+            Image, DATE_TAGS = None, []
+
+        stats = {"exif": 0, "filename": 0, "mtime": 0, "missing_file": 0}
+        for i, path in enumerate(missing):
+            if i and i % 5000 == 0:
+                LOGGER.info("  …%d / %d", i, len(missing))
+            p = Path(path)
+            if not p.exists():
+                stats["missing_file"] += 1
+                continue
+
+            dt = None; source = None
+
+            # 1. PIL EXIF re-read
+            if Image is not None:
+                try:
+                    with Image.open(p) as im:
+                        ex = im.getexif()
+                        for tid in DATE_TAGS:
+                            if not tid: continue
+                            v = ex.get(tid)
+                            if not v: continue
+                            try:
+                                dt = datetime.strptime(str(v).strip(), "%Y:%m:%d %H:%M:%S")
+                                source = "exif"
+                                break
+                            except ValueError:
+                                pass
+                except Exception:  # noqa: BLE001
+                    pass
+
+            # 2. Filename pattern
+            if dt is None:
+                dt = self._parse_filename_time(path)
+                if dt is not None:
+                    source = "filename"
+
+            # 3. mtime fallback
+            if dt is None:
+                try:
+                    dt = datetime.fromtimestamp(p.stat().st_mtime)
+                    source = "mtime"
+                except Exception:  # noqa: BLE001
+                    continue
+
+            stats[source] = stats.get(source, 0) + 1
+            images[path]["time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+            images[path]["year"] = dt.year
+            images[path]["month"] = dt.month
+            images[path]["time_source"] = source
+
+        LOGGER.info(
+            "Time backfill done. EXIF re-read: %d, filename: %d, mtime: %d, missing file: %d",
+            stats["exif"], stats["filename"], stats["mtime"], stats["missing_file"],
+        )
+
+    @staticmethod
+    def _parse_gps(gps: dict) -> Optional[Tuple[float, float]]:
+        """
+        Convert a PIL-style EXIF GPSInfo dict to (lat, lng) decimal degrees.
+
+        PIL leaves GPSInfo as tag-numbered (1/2/3/4 for ref/lat/ref/lng);
+        keys may be int or str depending on whether the dict has been
+        round-tripped through JSON. Values for lat/lng are DMS tuples
+        (degrees, minutes, seconds).
+        """
+        if not isinstance(gps, dict):
+            return None
+
+        def g(*keys):
+            for k in keys:
+                if k in gps:
+                    return gps[k]
+            return None
+
+        lat_ref = g(1, "1", "GPSLatitudeRef") or "N"
+        lat_dms = g(2, "2", "GPSLatitude")
+        lng_ref = g(3, "3", "GPSLongitudeRef") or "E"
+        lng_dms = g(4, "4", "GPSLongitude")
+        if not lat_dms or not lng_dms:
+            return None
+        try:
+            # DMS tuple → decimal degrees
+            if hasattr(lat_dms, "__len__") and len(lat_dms) == 3:
+                lat = float(lat_dms[0]) + float(lat_dms[1]) / 60 + float(lat_dms[2]) / 3600
+            else:
+                lat = float(lat_dms)  # already decimal
+            if hasattr(lng_dms, "__len__") and len(lng_dms) == 3:
+                lng = float(lng_dms[0]) + float(lng_dms[1]) / 60 + float(lng_dms[2]) / 3600
+            else:
+                lng = float(lng_dms)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if str(lat_ref).upper().startswith("S"):
+            lat = -lat
+        if str(lng_ref).upper().startswith("W"):
+            lng = -lng
+        # Discard nonsense values (some EXIF writers leave (0,0,0))
+        if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+            return None
+        if lat == 0 and lng == 0:
+            return None
+        return lat, lng
+
+    @staticmethod
     def _load_overlay(path: Path, default):
         """讀 overlay JSON；不存在或壞掉就回 default。"""
         if not path.exists():
@@ -82,53 +236,160 @@ class PhotoIndex:
             LOGGER.warning("Failed to read overlay %s: %s", path, e)
             return default
 
+    def _backfill_location_names(self, images: Dict[str, Dict]) -> None:
+        """
+        為 ``images`` 中有 GPS 的照片回填 ``location_name``。
+
+        策略：
+        1. 收集所有唯一 (lat, lng) 座標（rounded 到小數點後 4 位 ≈ 11m 精度）
+        2. 一次性呼叫 ``reverse_geocoder.search`` 拿地名（離線、純 numpy）
+        3. 若 ``location_names.json`` 有自訂覆寫（key=``"lat,lng"``），用使用者值
+        """
+        try:
+            import reverse_geocoder as rg
+        except ImportError:
+            LOGGER.warning(
+                "reverse_geocoder not installed; skipping --with-location. "
+                "Install with: pip install reverse-geocoder"
+            )
+            return
+
+        coord_to_paths: Dict[Tuple[float, float], List[str]] = {}
+        for path, info in images.items():
+            gps = info.get("gps")
+            if not gps:
+                continue
+            lat, lng = gps.get("GPSLatitude"), gps.get("GPSLongitude")
+            if lat is None or lng is None:
+                continue
+            key = (round(float(lat), 4), round(float(lng), 4))
+            coord_to_paths.setdefault(key, []).append(path)
+
+        if not coord_to_paths:
+            LOGGER.info("No GPS coordinates found; nothing to reverse-geocode.")
+            return
+
+        coords = list(coord_to_paths.keys())
+        LOGGER.info("Reverse-geocoding %d unique coordinates (%d photos)...",
+                    len(coords), sum(len(p) for p in coord_to_paths.values()))
+        # mode=1 uses single-thread; cheaper for our scale + avoids the noisy
+        # "Loading formatted geocoded file..." reload on subsequent calls.
+        results = rg.search(coords, mode=1)
+
+        # Build coord → "City, CC" map, apply user overrides from location_names.json
+        coord_to_name: Dict[Tuple[float, float], str] = {}
+        for coord, r in zip(coords, results):
+            city = r.get("name", "").strip()
+            cc = r.get("cc", "").strip()
+            coord_to_name[coord] = f"{city}, {cc}" if city and cc else (city or cc or "Unknown")
+
+        # User overrides ("lat,lng" key) win over auto-geocoded names
+        overrides_applied = 0
+        for coord in coords:
+            key_str = f"{coord[0]:.4f},{coord[1]:.4f}"
+            if key_str in self.location_names:
+                coord_to_name[coord] = self.location_names[key_str]
+                overrides_applied += 1
+
+        # Stamp location_name onto every image
+        stamped = 0
+        for coord, paths in coord_to_paths.items():
+            name = coord_to_name[coord]
+            for path in paths:
+                images[path]["location_name"] = name
+                stamped += 1
+
+        LOGGER.info(
+            "Reverse-geocoded %d photos across %d places (%d user overrides applied)",
+            stamped, len(set(coord_to_name.values())), overrides_applied,
+        )
+
     def build(
         self,
-        labels_path: str,
+        labels_paths=None,
         faces_path: Optional[str] = None,
+        embeddings_paths=None,
+        with_location: bool = False,
+        # Back-compat single-string aliases
+        labels_path: Optional[str] = None,
         embeddings_path: Optional[str] = None,
     ) -> Dict:
         """
         建立統一索引。
 
         Args:
-            labels_path: labels.json 路徑
-            faces_path: face_clusters.json 路徑（可選）
-            embeddings_path: embeddings.pkl 路徑（可選，用於 EXIF）
+            labels_paths: list of labels.json file paths OR directories (auto-discover *.json).
+                Each photo root may have its own labels sidecar; the union is consumed.
+            faces_path: face_clusters.json 路徑（全域）
+            embeddings_paths: list of embeddings.pkl files OR directories.
+            with_location: 啟用反向地理編碼（離線，需 ``reverse-geocoder`` 套件）
+                為每張有 GPS 的照片回填 ``location_name`` 欄位（如 ``Taipei, TW``）。
+                用戶可在 ``index/location_names.json`` 用 ``"lat,lng" → "name"``
+                覆寫自動結果（精度為小數點後 4 位）。
 
         Returns:
             索引結構
         """
-        LOGGER.info("Building unified index...")
+        # Back-compat: accept the old single-string form too
+        if labels_path and not labels_paths:
+            labels_paths = [labels_path]
+        if embeddings_path and not embeddings_paths:
+            embeddings_paths = [embeddings_path]
+        labels_paths = labels_paths or []
+        embeddings_paths = embeddings_paths or []
 
-        # 1. 載入 labels
-        LOGGER.info("Loading labels from %s", labels_path)
-        with open(labels_path, "r", encoding="utf-8") as f:
-            labels_data = json.load(f)
+        # Resolve each input to a concrete list of files (expand directories)
+        def _expand(paths_or_dirs, glob_pat: str) -> List[Path]:
+            files: List[Path] = []
+            for arg in paths_or_dirs:
+                p = Path(arg)
+                if p.is_dir():
+                    files.extend(sorted(x for x in p.glob(glob_pat) if not x.name.startswith(".")))
+                elif p.exists():
+                    files.append(p)
+                else:
+                    LOGGER.warning("Skipping missing path: %s", p)
+            return files
+
+        labels_files = _expand(labels_paths, "*.json")
+        if not labels_files:
+            raise RuntimeError("No labels file given. Pass --labels at least once.")
+
+        LOGGER.info("Building unified index from %d labels file(s)...", len(labels_files))
 
         images: Dict[str, Dict] = {}
-        for r in labels_data.get("results", []):
-            if "error" not in r:
-                path = r["path"]
-                images[path] = {
-                    "path": path,
-                    "label": r.get("text", ""),
-                    "faces": [],
-                    "time": None,
-                    "location": None,
-                    "gps": None,
-                }
+        # 1. 載入 labels（multi-source: union all results, dedupe by path）
+        for lp in labels_files:
+            LOGGER.info("Loading labels from %s", lp)
+            with open(lp, "r", encoding="utf-8") as f:
+                labels_data = json.load(f)
+            for r in labels_data.get("results", []):
+                if "error" not in r:
+                    path = r["path"]
+                    images[path] = {
+                        "path": path,
+                        "label": r.get("text", ""),
+                        "faces": [],
+                        "time": None,
+                        "location": None,
+                        "gps": None,
+                    }
 
-        LOGGER.info("Loaded %d images from labels", len(images))
+        LOGGER.info("Loaded %d images across all labels files", len(images))
 
-        # 2. 載入 EXIF（如果有 embeddings.pkl）
-        if embeddings_path and Path(embeddings_path).exists():
-            LOGGER.info("Loading EXIF from %s", embeddings_path)
-            with open(embeddings_path, "rb") as f:
-                emb_data = pickle.load(f)
+        # 2. 載入 EXIF — embeddings_paths 是 list，每個元素可以是檔案或目錄
+        pkl_files: List[Path] = _expand(embeddings_paths, "*.pkl")
+        if pkl_files:
 
-            for path, exif in zip(emb_data["paths"], emb_data.get("exif", [])):
-                if path in images:
+            exif_merged = 0
+            gps_extracted = 0
+            for pkl in pkl_files:
+                LOGGER.info("Loading EXIF from %s", pkl)
+                with open(pkl, "rb") as f:
+                    emb_data = pickle.load(f)
+                for path, exif in zip(emb_data.get("paths", []), emb_data.get("exif", [])):
+                    if not (path in images and exif):
+                        continue
                     # 時間
                     dt_str = exif.get("DateTimeOriginal")
                     if dt_str:
@@ -139,18 +400,29 @@ class PhotoIndex:
                             images[path]["month"] = dt.month
                         except ValueError:
                             pass
-
-                    # GPS
-                    gps = exif.get("GPSInfo")
-                    if gps:
-                        images[path]["gps"] = gps
-                        # 簡單的地理位置描述
-                        lat = gps.get("GPSLatitude")
-                        lng = gps.get("GPSLongitude")
-                        if lat and lng:
+                    # GPS：PIL 給的 GPSInfo 是 tag-numbered dict（key 為 int 或 str("1"/"2")）。
+                    # tag 1=GPSLatitudeRef, 2=GPSLatitude (DMS tuple), 3=GPSLongitudeRef,
+                    # 4=GPSLongitude (DMS tuple)
+                    gps_raw = exif.get("GPSInfo")
+                    if gps_raw:
+                        latlng = self._parse_gps(gps_raw)
+                        if latlng is not None:
+                            lat, lng = latlng
+                            images[path]["gps"] = {"GPSLatitude": lat, "GPSLongitude": lng}
                             images[path]["location"] = f"{lat:.4f},{lng:.4f}"
+                            gps_extracted += 1
+                    if images[path].get("time") or images[path].get("gps"):
+                        exif_merged += 1
+            LOGGER.info("Merged EXIF data: %d photos got time/GPS (%d with GPS)",
+                        exif_merged, gps_extracted)
 
-            LOGGER.info("Merged EXIF data")
+        # 2.5 補時間：對沒 time 的照片，從磁碟讀 EXIF / 解析檔名 / fallback mtime
+        # (PIL 讀 EXIF 不解 pixel 資料很快，~5ms/file × 50k 約 4 分鐘，one-time cost)
+        self._fill_missing_time(images)
+
+        # 2.6 反向地理編碼（GPS → 城市/國家），可選
+        if with_location:
+            self._backfill_location_names(images)
 
         # 3. 載入人臉分群 + 套用人工 overlay（merges / moves / removed）
         if faces_path and Path(faces_path).exists():
@@ -362,6 +634,132 @@ class PhotoIndex:
 
         return unnamed
 
+    # ------------------------------------------------------------------
+    # Timeline events (v0.6 P3)
+    # ------------------------------------------------------------------
+
+    def build_timeline_events(
+        self,
+        gap_hours: float = 6.0,
+        min_photos: int = 3,
+    ) -> Dict:
+        """
+        Aggregate photo_index into "event" clusters and write
+        ``index/timeline_events.json``.
+
+        Algorithm (sliding window over time):
+          1. Take every photo with a ``time`` field, sort ascending
+          2. Walk in order; whenever the gap between consecutive photos
+             exceeds ``gap_hours`` (default 6 h), start a new segment
+          3. Drop segments shorter than ``min_photos`` (default 3)
+          4. For each surviving segment compute:
+             - start / end timestamps + duration_days
+             - top 3 face_ids by appearance count
+             - top 3 place names (from location_name)
+             - cover photo (medoid heuristic: middle-time photo,
+               preferring one with at least one face)
+
+        The output is saved next to photo_index.json so the server can
+        serve /api/timeline without recomputing.
+        """
+        if not self.index:
+            from_disk = json.loads(self.index_path.read_text(encoding="utf-8")) if self.index_path.exists() else None
+            if not from_disk:
+                raise RuntimeError("photo_index not built; run `build` first")
+            self.index = from_disk
+
+        images = self.index.get("images", {})
+        # Sort all timed photos ascending; carry (path, dt, info) tuples for speed
+        timed: List[Tuple[str, datetime, Dict]] = []
+        for path, info in images.items():
+            t = info.get("time")
+            if not t: continue
+            try:
+                dt = datetime.strptime(t, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+            timed.append((path, dt, info))
+        timed.sort(key=lambda x: x[1])
+        LOGGER.info("Timeline source: %d timed photos", len(timed))
+
+        gap = timedelta(hours=gap_hours)
+        segments: List[List[Tuple[str, datetime, Dict]]] = []
+        current: List[Tuple[str, datetime, Dict]] = []
+        for entry in timed:
+            if current and (entry[1] - current[-1][1]) > gap:
+                if len(current) >= min_photos:
+                    segments.append(current)
+                current = []
+            current.append(entry)
+        if len(current) >= min_photos:
+            segments.append(current)
+        LOGGER.info("Aggregated into %d events (gap=%.1fh, min_photos=%d)",
+                    len(segments), gap_hours, min_photos)
+
+        events: List[Dict] = []
+        for seg in segments:
+            paths = [e[0] for e in seg]
+            start_dt, end_dt = seg[0][1], seg[-1][1]
+            duration_days = max(1, (end_dt.date() - start_dt.date()).days + 1)
+
+            # Top faces (count appearances; faces is overlay-resolved already)
+            face_counts: Dict[str, int] = {}
+            for _, _, info in seg:
+                for f in info.get("faces", []):
+                    fid = f.get("face_id")
+                    if fid:
+                        face_counts[fid] = face_counts.get(fid, 0) + 1
+            top_faces = [fid for fid, _ in
+                         sorted(face_counts.items(), key=lambda kv: -kv[1])[:3]]
+
+            # Top places — order by appearance count
+            place_counts: Dict[str, int] = {}
+            for _, _, info in seg:
+                name = info.get("location_name")
+                if name:
+                    place_counts[name] = place_counts.get(name, 0) + 1
+            top_places = [n for n, _ in
+                          sorted(place_counts.items(), key=lambda kv: -kv[1])[:3]]
+
+            # Cover heuristic: prefer middle-time photo with faces; fallback to plain middle
+            mid_idx = len(seg) // 2
+            cover = seg[mid_idx][0]
+            with_faces = [p for p, _, info in seg if info.get("faces")]
+            if with_faces:
+                # Pick the with-faces photo nearest the middle
+                mid_path = seg[mid_idx][0]
+                if mid_path in with_faces:
+                    cover = mid_path
+                else:
+                    cover = min(with_faces, key=lambda p: abs(paths.index(p) - mid_idx))
+
+            events.append({
+                "id": f"evt_{start_dt.strftime('%Y%m%d_%H%M%S')}",
+                "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "end":   end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_days": duration_days,
+                "photo_count": len(paths),
+                "photos": paths,
+                "top_faces": top_faces,
+                "top_places": top_places,
+                "cover": cover,
+            })
+
+        # newest first for serve
+        events.sort(key=lambda e: e["start"], reverse=True)
+
+        out = {
+            "built_at": datetime.now().isoformat(),
+            "gap_hours": gap_hours,
+            "min_photos": min_photos,
+            "total_events": len(events),
+            "events": events,
+        }
+        out_path = self.index_path.parent / "timeline_events.json"
+        out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2))
+        LOGGER.info("Timeline saved → %s (%d events)", out_path, len(events))
+        return out
+
     def get_face_summary(self) -> Dict:
         """取得人臉摘要。"""
         if not self.index:
@@ -399,9 +797,22 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # build 子命令
     build_p = sub.add_parser("build", help="建立索引")
-    build_p.add_argument("--labels", required=True, help="labels.json 路徑")
-    build_p.add_argument("--faces", default=None, help="face_clusters.json 路徑")
-    build_p.add_argument("--embeddings", default=None, help="embeddings.pkl 路徑（用於 EXIF）")
+    # --labels and --embeddings can be repeated (one per photo root sidecar)
+    # AND/OR point to a directory (auto-discover *.json / *.pkl inside).
+    build_p.add_argument("--labels", required=True, action="append", default=[],
+                         help="labels.json 檔或包含多個 *.json 的目錄（可重複，每個對應一個 photo root）")
+    build_p.add_argument("--faces", default=None, help="face_clusters.json 路徑（全域）")
+    build_p.add_argument("--embeddings", action="append", default=[],
+                         help="embeddings .pkl 檔或目錄（可重複；用於 EXIF）")
+    build_p.add_argument(
+        "--with-location", action="store_true",
+        help="啟用反向地理編碼，為有 GPS 的照片回填 location_name（需 reverse-geocoder 套件）",
+    )
+
+    # build-timeline 子命令
+    tl_p = sub.add_parser("build-timeline", help="從現有 photo_index 聚合「事件」並寫 timeline_events.json")
+    tl_p.add_argument("--gap-hours", type=float, default=6.0, help="切段門檻（相鄰照片間隔小時，預設 6）")
+    tl_p.add_argument("--min-photos", type=int, default=3, help="最小事件照片數（預設 3）")
 
     # search 子命令
     search_p = sub.add_parser("search", help="搜尋照片")
@@ -434,11 +845,20 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.command == "build":
         index.build(
-            labels_path=args.labels,
+            labels_paths=args.labels,
             faces_path=args.faces,
-            embeddings_path=args.embeddings,
+            embeddings_paths=args.embeddings,
+            with_location=args.with_location,
         )
         print(f"Index built: {index.index.get('total_images', 0)} images")
+
+    elif args.command == "build-timeline":
+        out = index.build_timeline_events(
+            gap_hours=args.gap_hours,
+            min_photos=args.min_photos,
+        )
+        print(f"Timeline built: {out['total_events']} events "
+              f"(gap={out['gap_hours']}h, min_photos={out['min_photos']})")
 
     elif args.command == "search":
         results = index.search(

@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html data-theme="morandi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>總覽 · Local Album</title>
+<!--V05_ASSETS-->
+<style>
+/* v0.6 P2: Overview — single-column timeline grouped by month.
+   Reuses Morandi theme + iOS 26 aesthetic from main.html. */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:hsl(var(--b1))}
+body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,"Inter","Helvetica Neue",sans-serif;
+  color:hsl(var(--bc));padding:24px 28px 80px;line-height:1.5;
+  max-width:1600px !important;margin:0 auto !important;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;letter-spacing:-0.005em}
+@media (max-width:768px){ body{padding:16px 12px 80px} }
+
+[data-lucide]{display:block;width:1em;height:1em;stroke-width:1.75;flex-shrink:0}
+
+/* Top bar */
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:12px;flex-wrap:wrap;line-height:1}
+.topbar .left{display:flex;align-items:center;gap:10px}
+.topbar a{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 14px;
+  background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:999px;font-size:13px;cursor:pointer;text-decoration:none;
+  transition:all .2s ease-out;line-height:1}
+.topbar a:hover{background:hsl(var(--b3));transform:translateY(-1px);box-shadow:0 2px 8px hsl(var(--n) / 0.06)}
+.topbar a:active{transform:scale(.96)}
+.topbar a [data-lucide]{width:16px;height:16px}
+h1{font-size:28px;margin:0;font-weight:600;letter-spacing:-0.02em;color:hsl(var(--bc));display:flex;align-items:center;gap:10px}
+h1 [data-lucide]{width:24px;height:24px;color:hsl(var(--p))}
+.counter{color:hsl(var(--bc) / 0.55);font-size:13px}
+
+/* Year scrubber — minimalist ruler with Dock-style magnify on hover (desktop only)
+   No background pill, no border. Each year is a tick (small horizontal line) + label.
+   JS computes per-tick scale + leftward translate based on distance from cursor. */
+.year-scrubber{position:fixed;right:8px;top:50%;transform:translateY(-50%);z-index:30;
+  display:flex;flex-direction:column;align-items:flex-end;gap:4px;
+  padding:8px 6px;background:transparent;border:none;box-shadow:none}
+.year-scrubber button{display:inline-flex;align-items:center;justify-content:flex-end;gap:6px;
+  background:transparent;border:none;cursor:pointer;padding:2px 6px;
+  font-size:11px;color:hsl(var(--bc) / 0.30);font-weight:500;
+  font-family:inherit;font-variant-numeric:tabular-nums;
+  transform-origin:right center;transform:scale(.85);opacity:.7;
+  transition:color .15s, font-weight .15s, transform .12s ease-out, opacity .12s}
+.year-scrubber button::after{content:'';display:inline-block;width:6px;height:1.5px;
+  background:currentColor;border-radius:1px;opacity:.55}
+/* When scrubber is being hovered, all buttons fully opaque so the magnify reads clearly */
+.year-scrubber:hover button{opacity:1}
+.year-scrubber button:hover,
+.year-scrubber button.active{color:hsl(var(--p));font-weight:700}
+.year-scrubber button.active::after{width:16px;opacity:1;height:2px}
+@media (max-width:900px){ .year-scrubber{display:none} }
+
+/* ── Zoom control (bottom-right corner) ── */
+.zoom-control{position:fixed;right:14px;bottom:24px;z-index:35;
+  display:flex;flex-direction:column-reverse;align-items:center;gap:6px}
+.zoom-toggle{display:inline-flex;align-items:center;justify-content:center;
+  width:42px;height:42px;border-radius:50%;border:none;cursor:pointer;
+  background:hsl(var(--b1) / 0.9);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  color:hsl(var(--bc) / 0.75);box-shadow:0 4px 16px hsl(var(--n) / 0.12);
+  transition:all .2s ease-out}
+.zoom-toggle:hover{transform:translateY(-1px);color:hsl(var(--bc));box-shadow:0 6px 20px hsl(var(--n) / 0.16)}
+.zoom-toggle:active{transform:scale(.95)}
+.zoom-toggle [data-lucide]{width:20px;height:20px;display:block}
+.zoom-tray{display:none;flex-direction:column-reverse;gap:3px;
+  padding:6px;border-radius:22px;
+  background:hsl(var(--b1) / 0.92);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  box-shadow:0 4px 16px hsl(var(--n) / 0.12);
+  animation:zoomTrayIn .2s ease-out;min-width:78px}
+.zoom-control.open .zoom-tray{display:flex}
+@keyframes zoomTrayIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.zoom-tray button{display:flex;align-items:center;justify-content:center;
+  padding:7px 12px;border-radius:999px;border:none;cursor:pointer;
+  background:transparent;color:hsl(var(--bc) / 0.7);font-family:inherit;font-size:12px;font-weight:500;
+  letter-spacing:.02em;transition:all .15s;line-height:1;white-space:nowrap}
+.zoom-tray button:hover{background:hsl(var(--b3));color:hsl(var(--bc))}
+.zoom-tray button.active{background:hsl(var(--p));color:hsl(var(--pc));font-weight:600}
+
+/* Month section */
+.month-section{margin-bottom:8px}
+.month-header{position:sticky;top:0;z-index:10;
+  background:hsl(var(--b1) / 0.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  padding:14px 4px 10px;margin-bottom:10px;
+  display:flex;align-items:baseline;gap:10px;
+  font-size:18px;font-weight:600;color:hsl(var(--bc));letter-spacing:-0.015em}
+.month-header .count{font-size:12px;color:hsl(var(--bc) / 0.5);font-weight:400}
+.month-header .places{font-size:12px;color:hsl(var(--bc) / 0.55);font-weight:400;margin-left:auto;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50%}
+.month-header .places [data-lucide]{display:inline-block;width:11px;height:11px;vertical-align:-1px;margin-right:3px}
+
+/* Photo grid inside each month
+   Default: responsive based on viewport. User can override via zoom toggle
+   (5 levels: 3/5/7/9/11 cols) — only takes effect ≥768px so mobile keeps 2 cols. */
+.photo-grid{display:grid;gap:4px;grid-template-columns:repeat(2,1fr)}
+@media (min-width:600px)  { .photo-grid{grid-template-columns:repeat(3,1fr)} }
+@media (min-width:1000px) { .photo-grid{grid-template-columns:repeat(5,1fr); gap:5px} }
+@media (min-width:1400px) { .photo-grid{grid-template-columns:repeat(7,1fr); gap:4px} }
+@media (min-width:1900px) { .photo-grid{grid-template-columns:repeat(9,1fr); gap:3px} }
+/* Zoom overrides (≥768px) */
+@media (min-width:768px){
+  body[data-zoom="0"] .photo-grid{grid-template-columns:repeat(3,1fr) !important;gap:8px}
+  body[data-zoom="1"] .photo-grid{grid-template-columns:repeat(5,1fr) !important;gap:6px}
+  body[data-zoom="2"] .photo-grid{grid-template-columns:repeat(7,1fr) !important;gap:4px}
+  body[data-zoom="3"] .photo-grid{grid-template-columns:repeat(9,1fr) !important;gap:3px}
+  body[data-zoom="4"] .photo-grid{grid-template-columns:repeat(11,1fr) !important;gap:2px}
+}
+
+.photo-grid a{position:relative;display:block;aspect-ratio:1;overflow:hidden;border-radius:8px;
+  background:hsl(var(--b2));cursor:pointer;transition:transform .2s, box-shadow .2s}
+.photo-grid a:hover{transform:scale(1.02);box-shadow:0 4px 14px hsl(var(--n) / 0.12);z-index:1}
+.photo-grid img{position:absolute;inset:0;width:100% !important;height:100% !important;object-fit:cover;display:block}
+
+/* Materialization placeholder (shown before IntersectionObserver triggers) */
+.photo-grid.placeholder{min-height:240px;
+  background:repeating-linear-gradient(45deg,
+    hsl(var(--b2)) 0 12px, hsl(var(--b2) / 0.5) 12px 24px);
+  border-radius:8px;animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.6}}
+
+/* Empty / error state */
+.empty-state{text-align:center;padding:80px 20px;color:hsl(var(--bc) / 0.55)}
+.empty-state h2{font-size:18px;font-weight:500;margin-bottom:8px;color:hsl(var(--bc))}
+.empty-state code{display:inline-block;background:hsl(var(--b2));padding:6px 10px;border-radius:8px;
+  font-family:"SF Mono",ui-monospace,monospace;font-size:12px;margin-top:8px;color:hsl(var(--bc))}
+.spinner{text-align:center;padding:60px;color:hsl(var(--bc) / 0.5);font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="left">
+    <a href="/" title="回相簿"><i data-lucide="arrow-left"></i> 回相簿</a>
+    <h1><i data-lucide="layout-grid"></i> 總覽</h1>
+  </div>
+  <div class="counter" id="counter"></div>
+</div>
+
+<div id="root">
+  <div class="spinner">載入中…</div>
+</div>
+
+<div class="year-scrubber" id="yearScrubber" style="display:none"></div>
+
+<!-- Zoom control: bottom-right; click icon to expand a column-count picker -->
+<div class="zoom-control" id="zoomControl">
+  <button class="zoom-toggle" id="zoomToggle" title="調整每排照片數" aria-label="zoom">
+    <i data-lucide="layout-grid"></i>
+  </button>
+  <div class="zoom-tray">
+    <button data-level="0" title="3 張一排">最大</button>
+    <button data-level="1" title="5 張一排">較大</button>
+    <button data-level="2" title="7 張一排">正常</button>
+    <button data-level="3" title="9 張一排">較小</button>
+    <button data-level="4" title="11 張一排">最小</button>
+  </div>
+</div>
+
+<script>
+let PHOTOS = [];
+let GROUPS = [];   // [{year, month, key, photos, places}]
+let activeYear = null;
+const observer = new IntersectionObserver(onIntersect, {rootMargin: '200px 0px'});
+
+async function load(){
+  let data;
+  try {
+    data = await fetch('/api/overview').then(r => r.json());
+  } catch (e) {
+    return showError('無法載入照片資料：' + e);
+  }
+  if (data.error) return showError(data.error, data.hint);
+  PHOTOS = data.photos || [];
+  document.getElementById('counter').textContent = `共 ${PHOTOS.length} 張`;
+  if (!PHOTOS.length) return showError('沒有照片可以顯示。');
+  groupByMonth();
+  renderShell();
+  renderYearScrubber();
+}
+
+function groupByMonth(){
+  const map = new Map();
+  for (const p of PHOTOS) {
+    if (!p.year || !p.month) continue;
+    const key = `${p.year}-${String(p.month).padStart(2,'0')}`;
+    if (!map.has(key)) map.set(key, {year: p.year, month: p.month, key, photos: [], places: new Set()});
+    const g = map.get(key);
+    g.photos.push(p);
+    if (p.location_name) g.places.add(p.location_name);
+  }
+  // already sorted by time desc → key insertion order is correct
+  GROUPS = Array.from(map.values());
+}
+
+function renderShell(){
+  const root = document.getElementById('root');
+  root.innerHTML = GROUPS.map(g => {
+    const placesPreview = [...g.places].slice(0,3).join(' · ');
+    const placesHtml = placesPreview
+      ? `<span class="places"><i data-lucide="map-pin"></i>${placesPreview}${g.places.size>3 ? ` 等 ${g.places.size} 地` : ''}</span>`
+      : '';
+    return `<section class="month-section" id="m_${g.key}" data-key="${g.key}" data-year="${g.year}">
+      <div class="month-header">
+        <span>${g.year} 年 ${g.month} 月</span>
+        <span class="count">${g.photos.length} 張</span>
+        ${placesHtml}
+      </div>
+      <div class="photo-grid placeholder" data-target="${g.key}"></div>
+    </section>`;
+  }).join('');
+  window.refreshIcons && window.refreshIcons();
+  // Observe every placeholder grid for materialization
+  document.querySelectorAll('.photo-grid.placeholder').forEach(el => observer.observe(el));
+  // Track which year is currently in view (for scrubber)
+  document.querySelectorAll('.month-section').forEach(s => yearObserver.observe(s));
+}
+
+function onIntersect(entries){
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    const key = e.target.dataset.target;
+    const group = GROUPS.find(g => g.key === key);
+    if (group) materialize(e.target, group);
+    observer.unobserve(e.target);
+  }
+}
+
+function materialize(gridEl, group){
+  gridEl.classList.remove('placeholder');
+  gridEl.innerHTML = group.photos.map(p => {
+    const u = encodeURI(p.path);
+    return `<a href="/image/${u}" target="_blank" rel="noopener" title="${escapeAttr(p.path)}">
+      <img src="/img_thumb/${u}?w=400" loading="lazy" decoding="async">
+    </a>`;
+  }).join('');
+}
+
+// Year-in-view tracker for scrubber
+const yearObserver = new IntersectionObserver(entries => {
+  // Pick the topmost intersecting section
+  const visible = entries.filter(e => e.isIntersecting).sort((a,b) => a.boundingClientRect.top - b.boundingClientRect.top);
+  if (visible.length) setActiveYear(parseInt(visible[0].target.dataset.year));
+}, {rootMargin: '-20% 0px -70% 0px'});
+
+function setActiveYear(y){
+  if (y === activeYear) return;
+  activeYear = y;
+  document.querySelectorAll('.year-scrubber button').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.year) === y);
+  });
+}
+
+function renderYearScrubber(){
+  const years = [...new Set(GROUPS.map(g => g.year))];  // already desc-sorted
+  if (years.length < 2) return;  // only one year, scrubber useless
+  const sb = document.getElementById('yearScrubber');
+  sb.innerHTML = years.map(y => `<button data-year="${y}" onclick="jumpToYear(${y})">${y}</button>`).join('');
+  sb.style.display = 'flex';
+  // Dock-style magnify on hover
+  sb.addEventListener('mousemove', scrubberMagnify);
+  sb.addEventListener('mouseleave', scrubberReset);
+}
+
+// Dock-style magnify with strong contrast:
+//   resting: scale 0.85 (set via CSS), opaque only on scrubber-hover
+//   peak:    scale 2.6, also pulled leftward (translateX -8px) so the active
+//            year visibly "pops out" of the line, mimicking macOS Dock liftoff
+//   falloff: cubic (factor^3) — much sharper drop than linear/cosine, so
+//            only ~3 neighbours grow noticeably, the rest stay small
+function scrubberMagnify(e){
+  const sb = e.currentTarget;
+  const cursorY = e.clientY;
+  const radius = 70;        // tighter radius → fewer items affected
+  const maxScale = 2.6;     // big peak
+  const maxPullX = 10;      // px pulled leftward at peak
+  const restingScale = 0.85;
+  for (const btn of sb.children) {
+    const r = btn.getBoundingClientRect();
+    const center = r.top + r.height / 2;
+    const d = Math.abs(center - cursorY);
+    // linear-then-cubed falloff: items close get most of the lift, far ones drop fast
+    const linear = Math.max(0, 1 - d / radius);
+    const factor = linear * linear * linear;  // cubic ease-out
+    const scale = restingScale + (maxScale - restingScale) * factor;
+    const pullX = -maxPullX * factor;
+    btn.style.transform = `translateX(${pullX.toFixed(1)}px) scale(${scale.toFixed(3)})`;
+  }
+}
+
+function scrubberReset(e){
+  // Restore to CSS resting state (scale .85 + 0 translate)
+  for (const btn of e.currentTarget.children) btn.style.transform = '';
+}
+
+// Year-jump optimization:
+//   Without this, smooth-scrolling from 2026 → 2003 makes every month section in
+//   between briefly enter the viewport → IntersectionObserver fires for ALL of
+//   them → every grid materializes + queues photo requests → server is hammered
+//   and the destination month loads slowly.
+//
+// Strategy:
+//   1. Disconnect the observer (no more sections will materialize)
+//   2. scrollIntoView (smooth)
+//   3. After scroll settles, manually materialize the destination immediately,
+//      then re-observe the rest so further user scrolling still works.
+let _jumpAbortId = 0;
+
+function jumpToYear(y){
+  const target = GROUPS.find(g => g.year === y);
+  if (!target) return;
+  const el = document.getElementById(`m_${target.key}`);
+  if (!el) return;
+
+  observer.disconnect();
+  const myJump = ++_jumpAbortId;  // Cancel any prior in-flight jump finalisation
+
+  el.scrollIntoView({behavior:'smooth', block:'start'});
+
+  // Smooth scroll typically completes < 500ms on most browsers, but distance
+  // matters. Listen for scroll to settle, fall back to a hard 800ms timeout.
+  let lastY = window.scrollY, settleCount = 0;
+  const checkSettled = setInterval(() => {
+    if (myJump !== _jumpAbortId) { clearInterval(checkSettled); return; }
+    if (window.scrollY === lastY) {
+      if (++settleCount >= 2) { clearInterval(checkSettled); finalise(); }
+    } else { settleCount = 0; lastY = window.scrollY; }
+  }, 80);
+  setTimeout(() => { if (myJump === _jumpAbortId) { clearInterval(checkSettled); finalise(); } }, 800);
+
+  function finalise(){
+    if (myJump !== _jumpAbortId) return;
+    // Materialise the destination month first — this is what the user wants to see
+    const destGrid = el.querySelector('.photo-grid.placeholder');
+    if (destGrid) materialize(destGrid, target);
+    // Re-observe every other placeholder so natural scrolling resumes lazy loading
+    document.querySelectorAll('.photo-grid.placeholder').forEach(p => observer.observe(p));
+  }
+}
+
+function showError(msg, hint){
+  document.getElementById('root').innerHTML = `<div class="empty-state">
+    <h2>${escapeHtml(msg)}</h2>
+    ${hint ? `<div style="margin-top:8px;font-size:13px">${escapeHtml(hint).replace(/\n/g,'<br>')}</div><code>${escapeHtml(hint)}</code>` : ''}
+  </div>`;
+}
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+function escapeAttr(s){ return escapeHtml(s); }
+
+// ── Zoom control: 5 levels (3/5/7/9/11 cols), persisted via localStorage ──
+function initZoom(){
+  const ctrl = document.getElementById('zoomControl');
+  const toggle = document.getElementById('zoomToggle');
+  const tray = ctrl.querySelector('.zoom-tray');
+  // Restore last-used level (default: 2 = 正常 = 7 cols)
+  let level = parseInt(localStorage.getItem('overview.zoom'));
+  if (!(level >= 0 && level <= 4)) level = 2;
+  applyZoom(level);
+  // Open/close tray on toggle click
+  toggle.addEventListener('click', e => { e.stopPropagation(); ctrl.classList.toggle('open'); });
+  // Click outside closes the tray
+  document.addEventListener('click', e => {
+    if (!ctrl.contains(e.target)) ctrl.classList.remove('open');
+  });
+  // Pick a level
+  tray.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      applyZoom(parseInt(btn.dataset.level));
+      // Keep tray open so user can A/B test sizes quickly
+    });
+  });
+}
+
+function applyZoom(level){
+  document.body.setAttribute('data-zoom', String(level));
+  localStorage.setItem('overview.zoom', String(level));
+  document.querySelectorAll('.zoom-tray button').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.level) === level);
+  });
+}
+
+initZoom();
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html data-theme="morandi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>回憶 · Local Album</title>
+<!--V05_ASSETS-->
+<style>
+/* v0.6 P4: Memories — themed cards (那年今日 / 旅行 / topic-month / place / person).
+   Reuses Morandi tokens + iOS 26 motion vocabulary. */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:hsl(var(--b1))}
+body{font-family:"Noto Sans TC","PingFang TC",-apple-system,BlinkMacSystemFont,"Inter","Helvetica Neue",sans-serif;
+  color:hsl(var(--bc));padding:24px 28px 80px;line-height:1.5;
+  max-width:1400px !important;margin:0 auto !important;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;letter-spacing:-0.005em}
+@media (max-width:768px){ body{padding:16px 12px 80px} }
+
+[data-lucide]{display:block;width:1em;height:1em;stroke-width:1.75;flex-shrink:0}
+
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px;flex-wrap:wrap;line-height:1}
+.topbar .left{display:flex;align-items:center;gap:10px}
+.topbar a, .topbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 14px;
+  background:hsl(var(--b2));color:hsl(var(--bc));border:none;border-radius:999px;font-size:13px;cursor:pointer;
+  text-decoration:none;transition:all .2s ease-out;line-height:1;font-family:inherit}
+.topbar a:hover, .topbar button:hover{background:hsl(var(--b3));transform:translateY(-1px);box-shadow:0 2px 8px hsl(var(--n) / 0.06)}
+.topbar a:active, .topbar button:active{transform:scale(.96)}
+.topbar a [data-lucide], .topbar button [data-lucide]{width:16px;height:16px}
+h1{font-size:28px;margin:0;font-weight:600;letter-spacing:-0.02em;color:hsl(var(--bc));display:flex;align-items:center;gap:10px}
+h1 [data-lucide]{width:24px;height:24px;color:hsl(var(--p))}
+.date-line{color:hsl(var(--bc) / 0.55);font-size:13px;margin-bottom:24px}
+
+/* Memory card grid — mosaic that tiles cleanly AND mixes direction (portrait + landscape).
+   Spans designed so the JS SIZE_PATTERN below produces zero-gap tiling
+   while giving each size a distinct aspect ratio:
+     featured (large landscape) ─ tall (portrait, same height as featured)
+     wide (short landscape) ─ default (square-ish)
+
+   Mobile (<600px):  1 col, every card 4:3
+   Tablet (4 cols):  featured=4×3, tall=2×4, wide=4×2, default=2×2  (row=92)
+   Desktop (6 cols): featured=4×4, tall=2×4, wide=3×2, default=2×2  (row=110)
+                     featured + tall fill rows 1-4 perfectly side-by-side.
+*/
+.mem-grid{display:grid;gap:14px;grid-auto-flow:dense;
+  grid-template-columns:1fr}
+.mem-card{aspect-ratio:4/3}  /* mobile fallback */
+
+@media (min-width:600px){
+  .mem-grid{grid-template-columns:repeat(4,1fr);grid-auto-rows:92px;gap:14px}
+  .mem-card           {grid-column:span 2; grid-row:span 2; aspect-ratio:auto}
+  .mem-card.featured  {grid-column:span 4; grid-row:span 3}
+  .mem-card.wide      {grid-column:span 4; grid-row:span 2}
+  .mem-card.tall      {grid-column:span 2; grid-row:span 4}
+}
+@media (min-width:1100px){
+  .mem-grid{grid-template-columns:repeat(6,1fr);grid-auto-rows:110px;gap:16px}
+  .mem-card           {grid-column:span 2; grid-row:span 2}
+  .mem-card.featured  {grid-column:span 4; grid-row:span 4}
+  .mem-card.wide      {grid-column:span 3; grid-row:span 2}
+  .mem-card.tall      {grid-column:span 2; grid-row:span 4}
+}
+
+.mem-card{position:relative;overflow:hidden;border-radius:18px;
+  background-color:hsl(var(--b2));background-size:cover;background-position:center;
+  cursor:pointer;transition:transform .25s ease-out, box-shadow .25s;
+  box-shadow:0 1px 3px hsl(var(--n) / 0.04)}
+.mem-card:hover{transform:translateY(-3px);box-shadow:0 12px 32px hsl(var(--n) / 0.16), 0 2px 8px hsl(var(--n) / 0.06)}
+.mem-card:active{transform:scale(.99)}
+/* Featured cards get a stronger title size */
+.mem-card.featured .title{font-size:30px;letter-spacing:-0.025em}
+@media (max-width:599px){ .mem-card.featured .title{font-size:24px} }
+
+/* Tinted gradient overlay for legibility */
+.mem-card::before{content:'';position:absolute;inset:0;
+  background:linear-gradient(to top,
+    hsl(0 0% 0% / 0.7) 0%, hsl(0 0% 0% / 0.4) 35%, hsl(0 0% 0% / 0.05) 65%, transparent 100%);
+  z-index:1}
+
+.mem-card .meta{position:absolute;left:0;right:0;bottom:0;padding:18px 20px 18px;color:#fff;z-index:2}
+.mem-card .type-tag{display:inline-flex;align-items:center;gap:6px;
+  padding:4px 10px;border-radius:999px;
+  background:hsl(0 0% 100% / 0.18);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  font-size:11px;font-weight:500;margin-bottom:10px;letter-spacing:.02em}
+.mem-card .type-tag [data-lucide]{width:12px;height:12px}
+.mem-card .title{font-size:24px;font-weight:700;letter-spacing:-0.02em;line-height:1.15;
+  text-shadow:0 2px 6px hsl(0 0% 0% / 0.4)}
+.mem-card .sub:empty{display:none}
+.mem-card .sub{font-size:13px;color:hsl(0 0% 100% / 0.85);margin-top:6px;
+  text-shadow:0 1px 3px hsl(0 0% 0% / 0.4)}
+
+/* Modal */
+.modal{position:fixed;inset:0;background:hsl(var(--n) / 0.40);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);z-index:100;
+  display:flex;align-items:flex-start;justify-content:center;padding:24px 0;
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .22s ease-out, visibility 0s linear .22s}
+.modal.active{opacity:1;visibility:visible;pointer-events:auto;transition:opacity .22s ease-out, visibility 0s linear 0s}
+.modal-box{background:hsl(var(--b1));border:none;border-radius:24px;
+  width:min(1500px,96vw);max-width:min(1500px,96vw);
+  flex-shrink:0;  /* don't let the flex parent squeeze us narrower than declared */
+  max-height:calc(100vh - 48px);display:flex;flex-direction:column;
+  box-shadow:0 24px 64px hsl(var(--n) / 0.20), 0 8px 24px hsl(var(--n) / 0.08);
+  transform:scale(.96);transition:transform .22s cubic-bezier(0.2, 0.9, 0.3, 1.1)}
+.modal.active .modal-box{transform:scale(1)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;padding:18px 24px;
+  border-bottom:1px solid hsl(var(--b3) / 0.5);flex-shrink:0;gap:12px}
+.modal-header h2{font-size:18px;font-weight:600;color:hsl(var(--bc));letter-spacing:-0.015em}
+.modal-header .sub{font-size:13px;color:hsl(var(--bc) / 0.55);font-weight:400;margin-top:2px}
+.modal-header .close{display:inline-flex;align-items:center;justify-content:center;
+  background:hsl(var(--b2));color:hsl(var(--bc) / 0.7);border:none;width:36px;height:36px;border-radius:50%;
+  cursor:pointer;transition:all .2s ease-out}
+.modal-header .close:hover{background:hsl(var(--b3));color:hsl(var(--bc))}
+.modal-header .close [data-lucide]{width:18px;height:18px}
+.modal-body{padding:18px 24px 24px;overflow-y:auto;flex:1}
+.modal-grid{display:grid;gap:4px;
+  grid-template-columns:repeat(3,1fr)}
+@media (min-width:600px) { .modal-grid{grid-template-columns:repeat(4,1fr)} }
+@media (min-width:900px) { .modal-grid{grid-template-columns:repeat(5,1fr); gap:5px} }
+@media (min-width:1300px){ .modal-grid{grid-template-columns:repeat(6,1fr); gap:6px} }
+@media (min-width:1700px){ .modal-grid{grid-template-columns:repeat(7,1fr); gap:6px} }
+.modal-grid a{position:relative;display:block;aspect-ratio:1;overflow:hidden;border-radius:8px;
+  background:hsl(var(--b2));cursor:pointer;transition:transform .2s, box-shadow .2s}
+.modal-grid a:hover{transform:scale(1.02);box-shadow:0 4px 14px hsl(var(--n) / 0.12);z-index:1}
+.modal-grid img{position:absolute;inset:0;width:100% !important;height:100% !important;object-fit:cover;display:block}
+
+.empty-state{text-align:center;padding:80px 20px;color:hsl(var(--bc) / 0.55)}
+.empty-state h2{font-size:18px;font-weight:500;margin-bottom:8px;color:hsl(var(--bc))}
+.empty-state code{display:inline-block;background:hsl(var(--b2));padding:6px 10px;border-radius:8px;
+  font-family:"SF Mono",ui-monospace,monospace;font-size:12px;margin-top:8px;color:hsl(var(--bc))}
+.spinner{text-align:center;padding:60px;color:hsl(var(--bc) / 0.5);font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="left">
+    <a href="/" title="回相簿"><i data-lucide="arrow-left"></i> 回相簿</a>
+    <h1><i data-lucide="sparkles"></i> 回憶</h1>
+  </div>
+  <button onclick="reload()" title="重新挑選"><i data-lucide="refresh-cw"></i> 換一批</button>
+</div>
+<div class="date-line" id="dateLine"></div>
+
+<div id="root">
+  <div class="spinner">挑選回憶中…</div>
+</div>
+
+<!-- Memory detail modal -->
+<div class="modal" id="memModal" onclick="if(event.target===this)closeModal()">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div>
+        <h2 id="modalTitle"></h2>
+        <div class="sub" id="modalSub"></div>
+      </div>
+      <button class="close" onclick="closeModal()" title="關閉"><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+const TYPE_LABELS = {
+  on_this_day: { icon: 'calendar-heart', label: '那年今日' },
+  trip:        { icon: 'map',           label: '旅行' },
+  topic:       { icon: 'tag',           label: '主題' },
+  place:       { icon: 'map-pin',       label: '地點' },
+  person:      { icon: 'user',          label: '人物' },
+};
+
+let CARDS = [];
+
+async function load(){
+  document.getElementById('root').innerHTML = '<div class="spinner">挑選回憶中…</div>';
+  let data;
+  try { data = await fetch('/api/memories').then(r => r.json()); }
+  catch (e) { return showError('無法載入：' + e); }
+  if (data.error) return showError(data.error, data.hint);
+  CARDS = data.cards || [];
+  document.getElementById('dateLine').textContent = `${data.date} · 從你的相簿挑出 ${CARDS.length} 段回憶`;
+  if (!CARDS.length) {
+    showError('還沒有可以推薦的回憶，再多拍一些照片試試。');
+    return;
+  }
+  render();
+}
+
+function reload(){ load(); }
+
+function render(){
+  document.getElementById('root').innerHTML = `<div class="mem-grid">${
+    CARDS.map(renderCard).join('')
+  }</div>`;
+  window.refreshIcons && window.refreshIcons();
+  // Deep-link: /memories#<card_id> opens that card directly.
+  const hash = decodeURIComponent((location.hash || '').slice(1));
+  if (hash) {
+    const idx = CARDS.findIndex(c => c.id === hash);
+    if (idx >= 0) openCard(idx);
+  }
+}
+
+// Mosaic size pattern — 7-card cycle that tiles a 6-col grid PERFECTLY:
+//   rows 1-3 :  featured (4×3) + tall (2×3)      → fills 6 cols × 3 rows
+//   rows 4-5 :  wide (3×2) + wide (3×2)          → fills 6 cols × 2 rows
+//   rows 6-7 :  3 × default (2×2)                → fills 6 cols × 2 rows
+// With `grid-auto-flow: dense` the browser packs exactly to this layout
+// when cards arrive in the order below.
+const SIZE_PATTERN = ['featured', 'tall', 'wide', 'wide', '', '', ''];
+
+function pickSize(i){ return SIZE_PATTERN[i % SIZE_PATTERN.length]; }
+
+function renderCard(c, i){
+  const type = TYPE_LABELS[c.type] || { icon: 'image', label: '回憶' };
+  const size = pickSize(i);
+  const cls  = 'mem-card' + (size ? ' ' + size : '');
+  // Featured cards request larger thumbnails (they're displayed bigger)
+  const thumbW = size === 'featured' ? 900 : 500;
+  return `<div class="${cls}" data-id="${c.id}" onclick="openCard(${i})"
+    style="background-image:url('/img_thumb/${encodeURI(c.cover)}?w=${thumbW}')">
+    <div class="meta">
+      <span class="type-tag"><i data-lucide="${type.icon}"></i> ${type.label}</span>
+      <div class="title">${escapeHtml(c.title)}</div>
+      <div class="sub">${escapeHtml(c.subtitle)}</div>
+    </div>
+  </div>`;
+}
+
+function openCard(idx){
+  const c = CARDS[idx];
+  if (!c) return;
+  const modal = document.getElementById('memModal');
+  document.getElementById('modalTitle').textContent = c.title;
+  // Modal subtitle: re-use the card's subtitle (which itself no longer contains
+  // photo counts after the v0.6.x trim — see _build_memories_payload).
+  document.getElementById('modalSub').textContent = c.subtitle || '';
+  document.getElementById('modalBody').innerHTML = `<div class="modal-grid">${
+    c.photos.map(p => {
+      const u = encodeURI(p);
+      return `<a href="/image/${u}" target="_blank" rel="noopener">
+        <img src="/img_thumb/${u}?w=400" loading="lazy" decoding="async"></a>`;
+    }).join('')
+  }</div>`;
+  modal.classList.add('active');
+}
+
+function closeModal(){ document.getElementById('memModal').classList.remove('active'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+function showError(msg, hint){
+  document.getElementById('root').innerHTML = `<div class="empty-state">
+    <h2>${escapeHtml(msg)}</h2>
+    ${hint ? `<div style="margin-top:8px;font-size:13px">${escapeHtml(hint)}</div>${hint.includes('build') ? `<code>${escapeHtml(hint)}</code>` : ''}` : ''}
+  </div>`;
+}
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+load();
+</script>
+</body>
+</html>
